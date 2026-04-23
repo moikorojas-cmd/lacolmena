@@ -1,1 +1,5 @@
+streamlit
+pandas
 fpdf
+altair
+psycopg2-binary
