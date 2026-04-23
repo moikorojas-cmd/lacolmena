@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import shutil
 import math
 from datetime import datetime, date, timedelta
@@ -67,17 +67,17 @@ st.markdown("""
 def inicializar_db():
     with sqlite3.connect("banquito.db") as conn:
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, usuario TEXT UNIQUE, password TEXT, rol TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS cuentas (id INTEGER PRIMARY KEY AUTOINCREMENT, id_usuario INTEGER, saldo REAL DEFAULT 0.0, FOREIGN KEY(id_usuario) REFERENCES usuarios(id))''')
-        c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_usuario INTEGER, tipo TEXT, monto REAL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, nombre TEXT, usuario TEXT UNIQUE, password TEXT, rol TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS cuentas (id SERIAL PRIMARY KEY, id_usuario INTEGER, saldo REAL DEFAULT 0.0, FOREIGN KEY(id_usuario) REFERENCES usuarios(id))''')
+        c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, id_usuario INTEGER, tipo TEXT, monto REAL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         c.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS socios (id INTEGER PRIMARY KEY AUTOINCREMENT, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS tramites (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id INTEGER PRIMARY KEY AUTOINCREMENT, mensaje TEXT, fecha TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS votos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS socios (id SERIAL PRIMARY KEY, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id SERIAL PRIMARY KEY, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS tramites (id SERIAL PRIMARY KEY, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id SERIAL PRIMARY KEY, mensaje TEXT, fecha TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id SERIAL PRIMARY KEY, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id SERIAL PRIMARY KEY, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votos (id SERIAL PRIMARY KEY, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
         
         for query in [
             '''ALTER TABLE socios ADD COLUMN fecha_nacimiento TEXT''',
@@ -113,16 +113,35 @@ def inicializar_db():
 
 inicializar_db()
 
+# --- SEMÁFORO DE CONEXIÓN ---
+try:
+    # Hacemos una consulta tonta solo para ver si responde
+    db_query("SELECT 1")
+    # Mostramos un mensaje verde y pequeño en la pantalla
+    st.sidebar.success("🟢 Conectado a Supabase")
+except Exception as e:
+    st.sidebar.error(f"🔴 Error de BD: {e}")
+
 # =============================================================================
 # 2. FUNCIONES NÚCLEO (DB, CORREOS, UTILIDADES)
 # =============================================================================
+# Pega aquí tu Connection String de Supabase
+DB_URL = "postgresql://postgres:[YOUR-PASSWORD]@db.odmsuphroyvueeodvtsx.supabase.co:5432/postgres"
+
 def db_query(query, params=(), fetch=True):
-    with sqlite3.connect("banquito.db") as conn:
-        c = conn.cursor()
-        c.execute(query, params)
-        if fetch: return c.fetchall()
-        conn.commit()
-        return c.lastrowid
+    with psycopg2.connect(DB_URL) as conn:
+        with conn.cursor() as c:
+            # Truco: Traducir la sintaxis de SQLite a PostgreSQL automáticamente
+            query_pg = query.replace('?', '%s')
+            
+            c.execute(query_pg, params)
+            if fetch: 
+                return c.fetchall()
+            conn.commit()
+            
+            # En PostgreSQL no existe lastrowid directo como en SQLite, 
+            # pero para tus updates/inserts actuales esto funcionará bien.
+            return None
 
 def get_config(clave, default, tipo=float):
     res = db_query("SELECT valor FROM configuracion WHERE clave=?", (clave,))
