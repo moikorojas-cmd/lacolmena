@@ -1,6 +1,5 @@
 import streamlit as st
-import psycopg2
-import shutil
+import sqlite3
 import math
 from datetime import datetime, date, timedelta
 import pandas as pd
@@ -64,35 +63,65 @@ st.markdown("""
     <div class="fixed-footer">Banquito La Colmena V 1.0 / Ing. Juan Moisés Rojas De La Torre / CIP: 273739.</div>
 """, unsafe_allow_html=True)
 
-# --- SEMÁFORO DE CONEXIÓN ---
-try:
-    # Hacemos una consulta tonta solo para ver si responde
-    db_query("SELECT 1")
-    # Mostramos un mensaje verde y pequeño en la pantalla
-    st.sidebar.success("🟢 Conectado a Supabase")
-except Exception as e:
-    st.sidebar.error(f"🔴 Error de BD: {e}")
+def inicializar_db():
+    with sqlite3.connect("banquito.db") as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, usuario TEXT UNIQUE, password TEXT, rol TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS cuentas (id INTEGER PRIMARY KEY AUTOINCREMENT, id_usuario INTEGER, saldo REAL DEFAULT 0.0, FOREIGN KEY(id_usuario) REFERENCES usuarios(id))''')
+        c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_usuario INTEGER, tipo TEXT, monto REAL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS socios (id INTEGER PRIMARY KEY AUTOINCREMENT, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS tramites (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id INTEGER PRIMARY KEY AUTOINCREMENT, mensaje TEXT, fecha TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
+        
+        for query in [
+            '''ALTER TABLE socios ADD COLUMN fecha_nacimiento TEXT''',
+            '''ALTER TABLE tramites ADD COLUMN respuesta TEXT''',
+            '''ALTER TABLE prestamos ADD COLUMN conteo_minimos INTEGER DEFAULT 0''',
+            '''ALTER TABLE socios ADD COLUMN password TEXT'''
+        ]:
+            try: c.execute(query)
+            except: pass
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS cumpleanos_pagos (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER, mes INTEGER, dni_cumpleanero TEXT, dni_aportante TEXT, monto REAL, fecha_pago TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS solicitudes_prestamo (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, accion INTEGER, monto REAL, fecha TEXT, estado TEXT DEFAULT 'PENDIENTE')''')
+        c.execute('''CREATE TABLE IF NOT EXISTS historial_anulaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, autorizador TEXT)''')
+
+        try:
+            hoy_str = datetime.now().strftime("%Y-%m-%d")
+            configs = [
+                ("fecha_fundacion", hoy_str), ("monto_minimo_capital", "50.0"), ("cuota_inscripcion", "20.0"),
+                ("interes_prestamo", "1.5"), ("aporte_mensual", "100.0"), ("presidente", "No asignado"),
+                ("correo_presidente", ""), ("tesorero", "No asignado"), ("secretario", "No asignado"),
+                ("password_presidente", "123456"), ("proxima_reunion", "2000-01-01"), ("proxima_reunion_hora", "16:00"),
+                ("jugar_cumpleanos", "SI"), ("cuota_cumpleanos", "50.0"), ("tope_prestamo_activo", "SI"),
+                ("tope_prestamo_monto", "3000.0"), ("amort_porcentaje_activo", "SI"), ("amort_porcentaje_valor", "2.0"),
+                ("mes_limite_minimos", "9")
+            ]
+            for clave, valor in configs:
+                c.execute("INSERT OR IGNORE INTO configuracion (clave, valor) VALUES (?, ?)", (clave, valor))
+
+            c.execute("INSERT OR IGNORE INTO usuarios (id, nombre, usuario, password, rol) VALUES (1, 'Administrador Principal', 'admin', 'admin123', 'superadmin')")
+            c.execute("INSERT OR IGNORE INTO cuentas (id_usuario, saldo) VALUES (1, 0.0)")
+        except: pass
+        conn.commit()
+
+inicializar_db()
 
 # =============================================================================
 # 2. FUNCIONES NÚCLEO (DB, CORREOS, UTILIDADES)
 # =============================================================================
-# Pega aquí tu Connection String de Supabase
-DB_URL = "postgresql://postgres.odmsuphroyvueeodvtsx:Moiko10042024@aws-1-us-east-2.pooler.supabase.com:6543/postgres"
-
 def db_query(query, params=(), fetch=True):
-    with psycopg2.connect(DB_URL) as conn:
-        with conn.cursor() as c:
-            # Truco: Traducir la sintaxis de SQLite a PostgreSQL automáticamente
-            query_pg = query.replace('?', '%s')
-            
-            c.execute(query_pg, params)
-            if fetch: 
-                return c.fetchall()
-            conn.commit()
-            
-            # En PostgreSQL no existe lastrowid directo como en SQLite, 
-            # pero para tus updates/inserts actuales esto funcionará bien.
-            return None
+    with sqlite3.connect("banquito.db") as conn:
+        c = conn.cursor()
+        c.execute(query, params)
+        if fetch: return c.fetchall()
+        conn.commit()
+        return c.lastrowid
 
 def get_config(clave, default, tipo=float):
     res = db_query("SELECT valor FROM configuracion WHERE clave=?", (clave,))
@@ -200,9 +229,6 @@ def obtener_estado_cumpleanos():
         if fnac:
             try:
                 dt_nac = datetime.strptime(fnac, "%Y-%m-%d")
-                edad_cumple = anio_act - dt_nac.year
-                if edad_cumple < 0: edad_cumple = 0
-                
                 nombre_fmt = f"{s_nom.split()[0]} {s_ape.split()[0]}"
                 estado, fecha_entrega = "PENDIENTE", "---"
                 entrega_bd = db_query("SELECT fecha FROM movimientos WHERE tipo LIKE ? AND monto < 0", (f"Entrega de Pozo Cumpleaños - {nombre_fmt} ({anio_act})%",))
@@ -230,11 +256,9 @@ def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
     if dni_filtro: pdf.cell(0, 6, f"Filtro aplicado (DNI/Nombre): {dni_filtro}", ln=True)
     pdf.cell(0, 6, f"Fecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ln=True); pdf.ln(5)
     
-    pdf.set_font("Courier", 'B', 9)
-    pdf.cell(35, 6, "FECHA", border=1, align='C'); pdf.cell(125, 6, "DETALLE DE OPERACION", border=1, align='C'); pdf.cell(30, 6, "MONTO (S/)", border=1, align='C'); pdf.ln()
+    pdf.set_font("Courier", 'B', 9); pdf.cell(35, 6, "FECHA", border=1, align='C'); pdf.cell(125, 6, "DETALLE DE OPERACION", border=1, align='C'); pdf.cell(30, 6, "MONTO (S/)", border=1, align='C'); pdf.ln()
     
-    pdf.set_font("Courier", '', 8)
-    t_ing, t_egr = 0.0, 0.0
+    pdf.set_font("Courier", '', 8); t_ing, t_egr = 0.0, 0.0
     for f, d, m in movimientos_fmt:
         d_clean = d.encode('latin-1', 'ignore').decode('latin-1')
         if len(d_clean) > 65: d_clean = d_clean[:62] + "..."
@@ -242,8 +266,7 @@ def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
         if m > 0: t_ing += m 
         else: t_egr += abs(m)
             
-    pdf.ln(5); pdf.set_font("Courier", 'B', 10)
-    pdf.cell(0, 6, f"TOTAL INGRESOS: S/ {t_ing:.2f}", ln=True); pdf.cell(0, 6, f"TOTAL EGRESOS:  S/ {t_egr:.2f}", ln=True)
+    pdf.ln(5); pdf.set_font("Courier", 'B', 10); pdf.cell(0, 6, f"TOTAL INGRESOS: S/ {t_ing:.2f}", ln=True); pdf.cell(0, 6, f"TOTAL EGRESOS:  S/ {t_egr:.2f}", ln=True)
     pdf.cell(0, 6, f"BALANCE NETO:   S/ {t_ing - t_egr:.2f}", ln=True)
     f_n = f"Caja_Temp.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as fi: b = fi.read()
@@ -450,53 +473,16 @@ def update_monto_inline(sol_id, input_key):
     db_query("UPDATE solicitudes_prestamo SET monto=? WHERE id=?", (st.session_state[input_key], sol_id), fetch=False)
 
 def render_top_header():
-    # Agregamos un par de saltos de línea para darle "respiro" desde el borde superior
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    
-    # Usamos un contenedor para que visualmente se mantenga estructurado
-    with st.container():
-        # Dividimos en 3 columnas para acomodar el nuevo botón
-        col_head1, col_head2, col_head3 = st.columns([3, 1, 1])
-        nombre = st.session_state.usuario_nombre if st.session_state.usuario_id else st.session_state.socio_nombre
-        rol = st.session_state.usuario_rol.upper() if st.session_state.usuario_id else "SOCIO"
-        
-        with col_head1:
-            st.markdown(f"<h2 style='color: #1e3a8a; margin-bottom: 0px; padding-bottom: 0px;'>🐝 BIENVENIDO(A), {nombre}</h2>", unsafe_allow_html=True)
-            st.markdown(f"<p style='color: #64748b; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; margin-top: 0px;'>PERFIL: {rol}</p>", unsafe_allow_html=True)
-            
-        with col_head2:
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-            # Solo Tesorero y Superadmin pueden descargar la base de datos
-            if rol in ["TESORERO", "SUPERADMIN"]:
-                try:
-                    with open("banquito.db", "rb") as f:
-                        db_bytes = f.read()
-                    st.download_button(
-                        label="💾 DESCARGAR BACKUP",
-                        data=db_bytes,
-                        file_name=f"Backup_Colmena_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db",
-                        mime="application/octet-stream",
-                        use_container_width=True
-                    )
-                except Exception:
-                    pass # Evita error si la base de datos está bloqueada por otro proceso
-                    
-        with col_head3:
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-            if st.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
-                # --- AUTO-BACKUP LOCAL SILENCIOSO ---
-                if rol in ["TESORERO", "SUPERADMIN"]:
-                    try:
-                        if not os.path.exists("backups"):
-                            os.makedirs("backups")
-                        fecha_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        shutil.copy2("banquito.db", f"backups/autobackup_cierre_{fecha_str}.db")
-                    except:
-                        pass # Si falla por permisos de Windows, no detiene el cierre de sesión
-
-                # Limpieza de sesión
-                st.session_state.update({'usuario_id': None, 'usuario_rol': None, 'usuario_nombre': None, 'socio_logged_in': False, 'socio_dni': None, 'socio_nombre': None, 'vista': 'login'})
-                st.rerun()
+    col_head1, col_head2 = st.columns([5, 1])
+    nombre = st.session_state.usuario_nombre if st.session_state.usuario_id else st.session_state.socio_nombre
+    rol = st.session_state.usuario_rol.upper() if st.session_state.usuario_id else "SOCIO"
+    col_head1.markdown(f"<h2 style='margin-bottom: 0px;'>🐝 BIENVENIDO(A), {nombre}</h2>", unsafe_allow_html=True)
+    col_head1.markdown(f"**PERFIL:** {rol}")
+    if col_head2.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
+        st.session_state.usuario_id = st.session_state.usuario_rol = st.session_state.usuario_nombre = None
+        st.session_state.socio_logged_in = st.session_state.socio_dni = st.session_state.socio_nombre = False
+        st.session_state.vista = 'login'
+        st.rerun()
     st.divider()
 
 # --- MÓDULOS DE UI COMPARTIDOS ---
@@ -992,14 +978,17 @@ elif st.session_state.vista == 'superadmin':
         except: ffun_date = date.today()
             
         ffun = st.date_input("Fecha de Fundación", value=ffun_date)
+        # Cargamos la lista de socios
         lista_socios_db = db_query("SELECT nombres, apellidos, correo FROM socios ORDER BY nombres ASC")
         opciones_socios = ["No asignado"] + [f"{r[0]} {r[1]}".strip() for r in lista_socios_db]
 
         st.divider(); st.write("#### PRESIDENCIA")
         cpres = st.selectbox("Presidente(a)", opciones_socios, index=opciones_socios.index(get_config("presidente", "No asignado", str)) if get_config("presidente", "No asignado", str) in opciones_socios else 0)
         
+        # --- LÓGICA DE DETECCIÓN MEJORADA ---
         correo_detectado = ""
         if cpres != "No asignado":
+            # Buscamos en la lista que ya cargamos para evitar errores de consulta SQL
             for r in lista_socios_db:
                 nombre_completo_iter = f"{r[0]} {r[1]}".strip()
                 if nombre_completo_iter == cpres:
@@ -1007,8 +996,10 @@ elif st.session_state.vista == 'superadmin':
                     break
         
         if cpres != "No asignado":
-            if correo_detectado: st.success(f"📧 Correo vinculado para Alertas: **{correo_detectado}**")
-            else: st.error("⚠️ El socio seleccionado no tiene correo registrado en el padrón.")
+            if correo_detectado:
+                st.success(f"📧 Correo vinculado para Alertas: **{correo_detectado}**")
+            else:
+                st.error("⚠️ El socio seleccionado no tiene correo registrado en el padrón.")
 
         cpass = st.text_input("Clave Secreta de Autorización (Romper Cerrojos)", get_config("password_presidente", "123456", str), type="password")
         
@@ -1025,16 +1016,25 @@ elif st.session_state.vista == 'superadmin':
         us_pwd = st.text_input("Clave de Acceso (Secretario)", u_s[0][1] if u_s else "secre123", type="password")
         
         if st.button("💾 GUARDAR CONFIGURACIÓN", type="primary"):
+            # Guardamos el correo detectado en la tabla configuracion
             db_query("UPDATE configuracion SET valor=? WHERE clave='correo_presidente'", (correo_detectado,), fetch=False)
+            
             for clave, val in [('fecha_fundacion', str(ffun)), ('presidente', cpres), ('password_presidente', cpass), ('tesorero', ctes), ('secretario', csec)]: 
                 db_query("UPDATE configuracion SET valor=? WHERE clave=?", (val, clave), fetch=False)
             
-            if db_query("SELECT id FROM usuarios WHERE rol='tesorero'"): db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='tesorero'", (ctes, ut_usr, ut_pwd), fetch=False)
-            else: db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'tesorero')", (ctes, ut_usr, ut_pwd), fetch=False)
+            # Actualizar perfiles de usuario
+            if db_query("SELECT id FROM usuarios WHERE rol='tesorero'"): 
+                db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='tesorero'", (ctes, ut_usr, ut_pwd), fetch=False)
+            else: 
+                db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'tesorero')", (ctes, ut_usr, ut_pwd), fetch=False)
                 
-            if db_query("SELECT id FROM usuarios WHERE rol='secretario'"): db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='secretario'", (csec, us_usr, us_pwd), fetch=False)
-            else: db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'secretario')", (csec, us_usr, us_pwd), fetch=False)
-            st.success("Configuración actualizada correctamente."); st.rerun()
+            if db_query("SELECT id FROM usuarios WHERE rol='secretario'"): 
+                db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='secretario'", (csec, us_usr, us_pwd), fetch=False)
+            else: 
+                db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'secretario')", (csec, us_usr, us_pwd), fetch=False)
+            
+            st.success("Configuración actualizada correctamente.")
+            st.rerun()
             
     elif menu_t == "🔑 ACCESOS DE SOCIOS":
         st.write("Si un socio perdió acceso a su correo o no puede entrar a su portal, puedes ver su contraseña actual o asignarle una nueva aquí.")
@@ -1177,7 +1177,7 @@ elif st.session_state.vista == 'secretario':
             for sc in lista_socios: st.radio(f"👤 {sc[1]} {sc[2]} (DNI: {sc[0]})", ["Presente", "Tardanza", "Faltó"], key=f"as_{sc[0]}", horizontal=True); st.divider()
             if st.form_submit_button("💾 GUARDAR REGISTRO DE ASISTENCIA COMPLETO", type="primary"):
                 for sc in lista_socios: db_query("INSERT INTO asistencia (dni_socio, fecha_asamblea, estado) VALUES (?,?,?)", (sc[0], str(fecha_as), st.session_state[f"as_{sc[0]}"]), fetch=False)
-                st.success(f"La asistencia para el día {format_fecha(str(fecha_as))} fue guardada exitosamente en los registros.")
+                st.success(f"La asistencia para el día {format_fecha(str(fecha_as))} fue guardada exitosamente in los registros.")
                 
     elif m == "🎂 CUMPLEAÑOS": ui_cumpleanos_admin(es_tesorero=False)
     elif m == "🗳️ VOTACIONES": ui_votaciones_admin()
@@ -1311,8 +1311,7 @@ elif st.session_state.vista == 'tesorero':
                         st.subheader(f"👤 Socio: {n} {a}"); st.write(f"**Acciones Totales:** {acc}"); st.divider()
                         st.markdown("### 📥 Aportes Mensuales")
                         ap_fijo = get_config("aporte_mensual", 0.0)
-                        pagar_ap = st.checkbox(f"Pagar Aportes este mes", value=True)
-                        if pagar_ap:
+                        if st.checkbox(f"Pagar Aportes este mes", value=True):
                             for i in range(1, acc + 1): st.write(f"- Aporte Acción {i}: S/ {f_m(ap_fijo)}")
                         
                         st.divider(); st.markdown("### 💳 Pago de Préstamos")
@@ -1354,7 +1353,7 @@ elif st.session_state.vista == 'tesorero':
                         else: st.success("✅ El socio no tiene deudas activas.")
                             
                         if st.button("1. CALCULAR DETALLE Y GENERAR VOUCHER", type="primary"):
-                            detalles_aportes, total_aportes = ([(i, ap_fijo) for i in range(1, acc + 1)], acc * ap_fijo) if pagar_ap else ([], 0.0)
+                            detalles_aportes, total_aportes = ([(i, ap_fijo) for i in range(1, acc + 1)], acc * ap_fijo) if 'pagar_ap' in locals() and pagar_ap else ([], 0.0)
                             detalles_prestamos, total_cap, total_int, needs_auth = [], 0.0, 0.0, False
                             for d_id, data in pagos_deudas.items():
                                 if data['cap'] > 0 or data['int'] > 0:
