@@ -64,55 +64,6 @@ st.markdown("""
     <div class="fixed-footer">Banquito La Colmena V 1.0 / Ing. Juan Moisés Rojas De La Torre / CIP: 273739.</div>
 """, unsafe_allow_html=True)
 
-def inicializar_db():
-    with sqlite3.connect("banquito.db") as conn:
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, nombre TEXT, usuario TEXT UNIQUE, password TEXT, rol TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS cuentas (id SERIAL PRIMARY KEY, id_usuario INTEGER, saldo REAL DEFAULT 0.0, FOREIGN KEY(id_usuario) REFERENCES usuarios(id))''')
-        c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, id_usuario INTEGER, tipo TEXT, monto REAL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS socios (id SERIAL PRIMARY KEY, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id SERIAL PRIMARY KEY, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS tramites (id SERIAL PRIMARY KEY, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id SERIAL PRIMARY KEY, mensaje TEXT, fecha TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id SERIAL PRIMARY KEY, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id SERIAL PRIMARY KEY, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS votos (id SERIAL PRIMARY KEY, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
-        
-        for query in [
-            '''ALTER TABLE socios ADD COLUMN fecha_nacimiento TEXT''',
-            '''ALTER TABLE tramites ADD COLUMN respuesta TEXT''',
-            '''ALTER TABLE prestamos ADD COLUMN conteo_minimos INTEGER DEFAULT 0''',
-            '''ALTER TABLE socios ADD COLUMN password TEXT'''
-        ]:
-            try: c.execute(query)
-            except: pass
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS cumpleanos_pagos (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER, mes INTEGER, dni_cumpleanero TEXT, dni_aportante TEXT, monto REAL, fecha_pago TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS solicitudes_prestamo (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, accion INTEGER, monto REAL, fecha TEXT, estado TEXT DEFAULT 'PENDIENTE')''')
-        c.execute('''CREATE TABLE IF NOT EXISTS historial_anulaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, autorizador TEXT)''')
-
-        try:
-            hoy_str = datetime.now().strftime("%Y-%m-%d")
-            configs = [
-                ("fecha_fundacion", hoy_str), ("monto_minimo_capital", "50.0"), ("cuota_inscripcion", "20.0"),
-                ("interes_prestamo", "1.5"), ("aporte_mensual", "100.0"), ("presidente", "No asignado"),
-                ("correo_presidente", ""), ("tesorero", "No asignado"), ("secretario", "No asignado"),
-                ("password_presidente", "123456"), ("proxima_reunion", "2000-01-01"), ("proxima_reunion_hora", "16:00"),
-                ("jugar_cumpleanos", "SI"), ("cuota_cumpleanos", "50.0"), ("tope_prestamo_activo", "SI"),
-                ("tope_prestamo_monto", "3000.0"), ("amort_porcentaje_activo", "SI"), ("amort_porcentaje_valor", "2.0"),
-                ("mes_limite_minimos", "9")
-            ]
-            for clave, valor in configs:
-                c.execute("INSERT OR IGNORE INTO configuracion (clave, valor) VALUES (?, ?)", (clave, valor))
-
-            c.execute("INSERT OR IGNORE INTO usuarios (id, nombre, usuario, password, rol) VALUES (1, 'Administrador Principal', 'admin', 'admin123', 'superadmin')")
-            c.execute("INSERT OR IGNORE INTO cuentas (id_usuario, saldo) VALUES (1, 0.0)")
-        except: pass
-        conn.commit()
-
-inicializar_db()
-
 # --- SEMÁFORO DE CONEXIÓN ---
 try:
     # Hacemos una consulta tonta solo para ver si responde
