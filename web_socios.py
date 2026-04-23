@@ -12,6 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 import urllib.parse
 import streamlit.components.v1 as components
+import altair as alt
 
 try:
     from fpdf import FPDF
@@ -51,7 +52,7 @@ st.markdown("""
     
     .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     
-    /* Pestañas (Tabs) MÁS GRANDES Y AMIGABLES (Para el login) */
+    /* Pestañas (Tabs) MÁS GRANDES Y AMIGABLES */
     div[data-testid="stTabs"] button { 
         font-size: 18px !important; 
         font-weight: 800 !important; 
@@ -109,8 +110,6 @@ st.markdown("""
     /* Contenedores */
     div[data-testid="stExpander"] { border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.02); background-color: #ffffff;}
     .stAlert { border-radius: 10px; }
-    .whatsapp-btn { background-color: #25D366; color: white !important; padding: 10px 15px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; text-align: center; text-transform: uppercase; }
-    .whatsapp-btn:hover { background-color: #128C7E; }
     
     /* FOOTER FIJO PERMANENTE SIN FORZAR MAYÚSCULAS */
     .fixed-footer {
@@ -142,10 +141,13 @@ def inicializar_db():
         c.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS socios (id INTEGER PRIMARY KEY AUTOINCREMENT, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0)''')
         c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1)''')
-        
         c.execute('''CREATE TABLE IF NOT EXISTS tramites (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id INTEGER PRIMARY KEY AUTOINCREMENT, mensaje TEXT, fecha TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
+
+        # Tablas de votación
+        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
 
         try: c.execute('''ALTER TABLE socios ADD COLUMN fecha_nacimiento TEXT''')
         except: pass
@@ -1024,7 +1026,7 @@ elif st.session_state.socio_logged_in:
                 st.write(f"🕒 **{format_fecha(f_msg)}**\n📝 {msg}")
                 st.divider()
     
-    opciones_socio = ["📊 RESUMEN Y PRÉSTAMOS", "📅 HISTORIAL DE PAGOS", "📥 MESA DE PARTES", "🤝 SIM. DE PRÉSTAMOS", "📈 SIM. DE INVERSIÓN"]
+    opciones_socio = ["📊 RESUMEN Y PRÉSTAMOS", "📅 HISTORIAL DE PAGOS", "📥 MESA DE PARTES", "🤝 SIM. DE PRÉSTAMOS", "📈 SIM. DE INVERSIÓN", "🗳️ URNA VIRTUAL"]
     menu_s = st.radio("MENÚ DEL SOCIO:", opciones_socio, horizontal=True)
     
     if menu_s == "📊 RESUMEN Y PRÉSTAMOS":
@@ -1220,6 +1222,46 @@ elif st.session_state.socio_logged_in:
                 st.write(f"- Aporte Nivelado: S/ {t_cap_prox:.2f}")
                 st.write(f"- Interés Nivelado: S/ {t_int_prox:.2f}")
 
+    elif menu_s == "🗳️ URNA VIRTUAL":
+        st.subheader("🗳️ URNA VIRTUAL (VOTACIONES)")
+        votaciones_abiertas = db_query("SELECT id, pregunta, opciones, fecha_creacion FROM votaciones WHERE estado='ABIERTA' ORDER BY id DESC")
+        
+        if votaciones_abiertas:
+            st.write("Tu voto es estrictamente igualitario. Cada socio equivale a un (1) solo voto, independientemente de sus acciones.")
+            for v_id, preg, ops_str, f_crea in votaciones_abiertas:
+                with st.container(border=True):
+                    st.markdown(f"#### {preg}")
+                    st.caption(f"Publicada el: {f_crea}")
+                    
+                    ya_voto = db_query("SELECT opcion FROM votos WHERE id_votacion=? AND dni_socio=?", (v_id, s_dni))
+                    if ya_voto:
+                        st.success(f"✅ Ya emitiste tu voto en esta consulta. Elegiste: **{ya_voto[0][0]}**")
+                    else:
+                        opciones_lista = [o.strip() for o in ops_str.split(',')]
+                        opcion_elegida = st.radio(f"Selecciona tu respuesta:", opciones_lista, key=f"radio_voto_{v_id}")
+                        if st.button("🗳️ EMITIR MI VOTO", type="primary", key=f"btn_votar_{v_id}"):
+                            db_query("INSERT INTO votos (id_votacion, dni_socio, opcion, peso) VALUES (?,?,?,?)", (v_id, s_dni, opcion_elegida, 1), fetch=False)
+                            st.success("Voto registrado con éxito.")
+                            st.rerun()
+        else:
+            st.info("No hay votaciones abiertas en este momento.")
+            
+        st.divider()
+        with st.expander("📊 VER RESULTADOS DE VOTACIONES PASADAS"):
+            vot_cerradas = db_query("SELECT id, pregunta, opciones, fecha_creacion FROM votaciones WHERE estado='CERRADA' ORDER BY id DESC")
+            if vot_cerradas:
+                for v_id, preg, ops_str, f_crea in vot_cerradas:
+                    st.write(f"**{preg}**")
+                    resultados = db_query("SELECT opcion, COUNT(*) as votos FROM votos WHERE id_votacion=? GROUP BY opcion", (v_id,))
+                    if resultados:
+                        df_res = pd.DataFrame(resultados, columns=["Opción", "Votos (1 x Socio)"])
+                        st.bar_chart(df_res.set_index("Opción"), color="#2563eb")
+                    else:
+                        st.write("Nadie votó en esta consulta.")
+                    st.write("---")
+            else:
+                st.write("No hay historial de votaciones cerradas.")
+
 # -----------------------------------------------------------------------------
 # VISTA: SUPERADMIN
 # -----------------------------------------------------------------------------
@@ -1394,7 +1436,7 @@ elif st.session_state.vista == 'secretario':
         else:
             st.info(f"🎂 **ALERTA DE CUMPLEAÑOS:** Próximos a cumplir años: **{', '.join(cumplen_este_mes_alerta)}**. Recuerde coordinar el presente institucional (Este año NO se está jugando panderito).")
     
-    m = st.radio("MENÚ PRINCIPAL:", ["📅 AGENDAR REUNIÓN", "✏️ ACTUALIZAR SOCIOS", "📥 MESA DE PARTES", "📜 CONSTANCIAS", "📢 COMUNICADOS", "🙋 ASISTENCIA", "🎂 CUMPLEAÑOS"], horizontal=True)
+    m = st.radio("MENÚ PRINCIPAL:", ["📅 AGENDAR REUNIÓN", "✏️ ACTUALIZAR SOCIOS", "📥 MESA DE PARTES", "📜 CONSTANCIAS", "📢 COMUNICADOS", "🙋 ASISTENCIA", "🎂 CUMPLEAÑOS", "🗳️ VOTACIONES"], horizontal=True)
     
     if m == "📅 AGENDAR REUNIÓN":
         st.write("El Tesorero SOLO podrá iniciar sesión para cobrar o prestar dinero en la fecha seleccionada. Además, se agregará un aviso automático al historial del portal de socios.")
@@ -1569,19 +1611,110 @@ elif st.session_state.vista == 'secretario':
             else:
                 st.info("No hay fechas registradas.")
 
+    elif m == "🗳️ VOTACIONES":
+        st.subheader("🗳️ GESTIÓN DE VOTACIONES (URNA VIRTUAL)")
+        
+        t_v1, t_v2 = st.tabs(["➕ CREAR NUEVA CONSULTA", "📊 RESULTADOS Y CIERRE"])
+        
+        with t_v1:
+            st.write("Crea una consulta para que los socios voten desde su celular. El voto es estrictamente 1 por persona.")
+            v_preg = st.text_input("Pregunta a consultar a los socios:", placeholder="Ej: ¿Subimos la cuota de inscripción a S/ 50.00?")
+            v_ops = st.text_input("Opciones de respuesta separadas por coma:", value="SÍ, NO, ABSTENCIÓN")
+            if st.button("🚀 PUBLICAR VOTACIÓN", type="primary"):
+                if v_preg and v_ops:
+                    db_query("INSERT INTO votaciones (pregunta, opciones, fecha_creacion) VALUES (?,?,?)", (v_preg, v_ops, datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
+                    st.success("Votación creada y publicada con éxito. Los socios ya pueden votar.")
+                else:
+                    st.warning("Completa la pregunta y las opciones.")
+                    
+        with t_v2:
+            st.write("Cierra las urnas y revisa los resultados finales.")
+            vot_abiertas = db_query("SELECT id, pregunta, fecha_creacion FROM votaciones WHERE estado='ABIERTA' ORDER BY id DESC")
+            if vot_abiertas:
+                for v_id, preg, f_crea in vot_abiertas:
+                    with st.container(border=True):
+                        st.write(f"**{preg}** (Creada el {f_crea})")
+                        
+                        resultados = db_query("SELECT opcion, COUNT(*) as votos FROM votos WHERE id_votacion=? GROUP BY opcion", (v_id,))
+                        if resultados:
+                            df_res = pd.DataFrame(resultados, columns=["Opción", "Votos (1 x Socio)"])
+                            st.bar_chart(df_res.set_index("Opción"), color="#2563eb")
+                        else:
+                            st.info("Aún no hay votos registrados.")
+                            
+                        if st.button("🔒 CERRAR URNA PARA ESTA CONSULTA", key=f"cierra_{v_id}"):
+                            db_query("UPDATE votaciones SET estado='CERRADA' WHERE id=?", (v_id,), fetch=False)
+                            st.rerun()
+            else:
+                st.info("No hay votaciones activas en este momento.")
+
 # -----------------------------------------------------------------------------
 # VISTA: TESORERO (OPERACIONES Y PAGOS)
 # -----------------------------------------------------------------------------
 elif st.session_state.vista == 'tesorero':
     render_top_header()
     
-    opciones_menu_t = ["👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "↩️ ANULAR OPERACIÓN"]
+    opciones_menu_t = ["📊 DASHBOARD", "👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "↩️ ANULAR OPERACIÓN"]
     if get_config("jugar_cumpleanos", "SI", str) == "SI":
-        opciones_menu_t.insert(4, "🎂 CUMPLEAÑOS")
+        opciones_menu_t.insert(5, "🎂 CUMPLEAÑOS")
         
     menu_t = st.radio("MÓDULOS FINANCIEROS:", opciones_menu_t, horizontal=True)
     
-    if menu_t == "👥 SOCIOS Y COMPRAS":
+    if menu_t == "📊 DASHBOARD":
+        st.subheader("📊 DASHBOARD ANALÍTICO DE TESORERÍA")
+        
+        # Extracción de KPIs
+        s_tot = float(db_query("SELECT SUM(monto) FROM movimientos")[0][0] or 0.0)
+        i_cc = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Ingreso Caja Chica%' OR tipo = 'Depósito Caja'")[0][0] or 0.0
+        e_cc = abs(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Egreso Caja Chica%' OR tipo = 'Retiro Caja'")[0][0] or 0.0)
+        f_cc = i_cc - e_cc
+        c_prin = s_tot - f_cc
+        
+        prestado_bd = db_query("SELECT SUM(saldo_actual) FROM prestamos WHERE estado='ACTIVO'")
+        dinero_prestado = float(prestado_bd[0][0]) if prestado_bd and prestado_bd[0][0] else 0.0
+        
+        patrimonio_total = c_prin + f_cc + dinero_prestado
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("CAJA PRINCIPAL (FÍSICO)", f"S/ {c_prin:.2f}")
+        c2.metric("DINERO EN LA CALLE", f"S/ {dinero_prestado:.2f}")
+        c3.metric("CAJA CHICA", f"S/ {f_cc:.2f}")
+        c4.metric("PATRIMONIO TOTAL", f"S/ {patrimonio_total:.2f}")
+        
+        st.divider()
+        
+        col_chart1, col_chart2 = st.columns(2)
+        
+        with col_chart1:
+            st.write("#### 🥧 DISTRIBUCIÓN DEL PORTAFOLIO")
+            if patrimonio_total > 0:
+                source = pd.DataFrame({
+                    "Categoría": ["Efectivo Caja Principal", "Dinero Prestado", "Caja Chica"],
+                    "Monto": [c_prin, dinero_prestado, f_cc]
+                })
+                base = alt.Chart(source).encode(
+                    theta=alt.Theta("Monto:Q", stack=True),
+                    color=alt.Color("Categoría:N", scale=alt.Scale(scheme='set2'), legend=alt.Legend(title="Fondo")),
+                    tooltip=["Categoría", "Monto"]
+                )
+                pie = base.mark_arc(innerRadius=50, outerRadius=120)
+                st.altair_chart(pie, use_container_width=True)
+            else:
+                st.info("No hay fondos registrados en el sistema.")
+                
+        with col_chart2:
+            st.write("#### 📈 CRECIMIENTO DE APORTES (HISTÓRICO)")
+            movs_aportes = db_query("SELECT fecha, monto FROM movimientos WHERE tipo LIKE '%Aporte%'")
+            if movs_aportes:
+                df_ap = pd.DataFrame(movs_aportes, columns=["fecha", "monto"])
+                df_ap['fecha'] = pd.to_datetime(df_ap['fecha'])
+                df_ap['Mes'] = df_ap['fecha'].dt.strftime('%Y-%m')
+                df_agrupado = df_ap.groupby('Mes')['monto'].sum().reset_index()
+                st.bar_chart(df_agrupado.set_index('Mes'), color="#2563eb")
+            else:
+                st.info("No hay aportes registrados en el sistema.")
+                
+    elif menu_t == "👥 SOCIOS Y COMPRAS":
         t1, t2 = st.tabs(["🔍 BÚSQUEDA AVANZADA Y ACCIONES EXTRA", "📝 REGISTRO DE NUEVO SOCIO"])
         
         with t1:
@@ -1990,15 +2123,26 @@ elif st.session_state.vista == 'tesorero':
                                     msg_correo = ""
                                     if correo:
                                         try:
-                                            REMITENTE = "lacolmenabanco@gmail.com"; PASSWORD = "fvux bnfk qbzv brad"
-                                            msg = MIMEMultipart(); msg['Subject'] = "Voucher de Pago - Banquito La Colmena"; msg['From'] = f"Banquito La Colmena <{REMITENTE}>"; msg['To'] = correo
-                                            msg.attach(MIMEText(f"Estimado/a {n} {a},\n\nAdjuntamos su comprobante de pago de la fecha.\n\nAtentamente,\nBanquito La Colmena.", 'plain', 'utf-8'))
-                                            adj = MIMEApplication(pdf_bytes, _subtype="pdf"); adj.add_header('Content-Disposition', 'attachment', filename=f"Voucher_Pago_{pdni}.pdf"); msg.attach(adj)
-                                            server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(REMITENTE, PASSWORD); server.send_message(msg); server.quit()
+                                            REMITENTE = "lacolmenabanco@gmail.com"
+                                            PASSWORD = "fvux bnfk qbzv brad"
+                                            msg = MIMEMultipart()
+                                            msg['Subject'] = "Voucher de Pago - Banquito La Colmena"
+                                            msg['From'] = f"Banquito La Colmena <{REMITENTE}>"
+                                            msg['To'] = correo
+                                            cuerpo = f"Estimado/a {n} {a},\n\nAdjuntamos su comprobante de pago de la fecha.\n\nAtentamente,\nBanquito La Colmena."
+                                            msg.attach(MIMEText(cuerpo, 'plain', 'utf-8'))
+                                            adj = MIMEApplication(pdf_bytes, _subtype="pdf")
+                                            adj.add_header('Content-Disposition', 'attachment', filename=f"Voucher_Pago_{pdni}.pdf")
+                                            server = smtplib.SMTP('smtp.gmail.com', 587)
+                                            server.starttls()
+                                            server.login(REMITENTE, PASSWORD)
+                                            server.send_message(msg)
+                                            server.quit()
                                             msg_correo = "✅ Correo enviado con éxito al socio."
                                         except Exception as e: msg_correo = f"⚠️ Fallo el envío de correo: {e}"
                                     else: msg_correo = "ℹ️ Socio sin correo registrado."
-                                    st.session_state.pu_msg_correo, st.session_state.pu_done = msg_correo, True
+                                    st.session_state.pu_msg_correo = msg_correo
+                                    st.session_state.pu_done = True
                                     st.session_state.pu_auth_success = False
                                     st.rerun()
                     else: st.error("Socio no encontrado.")
@@ -2158,10 +2302,8 @@ elif st.session_state.vista == 'tesorero':
                                                 if m == 1: a += 1
                                                 
                                                 if get_config("amort_porcentaje_activo", "NO", str) == "SI":
-                                                    m_pct = m_proy * (get_config("amort_porcentaje_valor", 0.0) / 100.0)
-                                                    m_pct = float(math.ceil(m_pct))
-                                                    if m_pct < m_min: m_pct = float(m_min)
-                                                    am = min(m_pct, sp)
+                                                    m_pct = float(math.ceil(m_proy * (get_config("amort_porcentaje_valor", 0.0) / 100.0)))
+                                                    am = min(m_pct if m_pct >= m_min else float(m_min), sp)
                                                 else:
                                                     am = min(m_min, sp)
                                                     
@@ -2178,11 +2320,21 @@ elif st.session_state.vista == 'tesorero':
                                             if item['correo']:
                                                 try:
                                                     pdf_correo = generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, incluir_contrato=False)
-                                                    REMITENTE = "lacolmenabanco@gmail.com"; PASSWORD = "fvux bnfk qbzv brad"
-                                                    msg = MIMEMultipart(); msg['Subject'] = "Cronograma de Préstamo - Banquito La Colmena"; msg['From'] = f"Banquito La Colmena <{REMITENTE}>"; msg['To'] = item['correo']
+                                                    REMITENTE = "lacolmenabanco@gmail.com"
+                                                    PASSWORD = "fvux bnfk qbzv brad"
+                                                    msg = MIMEMultipart()
+                                                    msg['Subject'] = "Cronograma de Préstamo - Banquito La Colmena"
+                                                    msg['From'] = f"Banquito La Colmena <{REMITENTE}>"
+                                                    msg['To'] = item['correo']
                                                     msg.attach(MIMEText(f"Estimado/a {item['socio']},\n\nSu préstamo ha sido aprobado exitosamente. Adjuntamos su nuevo cronograma de pagos.\n\nAtentamente,\nLa Junta Directiva.", 'plain', 'utf-8'))
-                                                    adj = MIMEApplication(pdf_correo, _subtype="pdf"); adj.add_header('Content-Disposition', 'attachment', filename=f"Cronograma_{pdni2}.pdf"); msg.attach(adj)
-                                                    server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(REMITENTE, PASSWORD); server.send_message(msg); server.quit()
+                                                    adj = MIMEApplication(pdf_correo, _subtype="pdf")
+                                                    adj.add_header('Content-Disposition', 'attachment', filename=f"Cronograma_{pdni2}.pdf")
+                                                    msg.attach(adj)
+                                                    server = smtplib.SMTP('smtp.gmail.com', 587)
+                                                    server.starttls()
+                                                    server.login(REMITENTE, PASSWORD)
+                                                    server.send_message(msg)
+                                                    server.quit()
                                                     msg_correo = "✅ Correo enviado con éxito al socio (Solo Cronograma)."
                                                 except Exception as e: msg_correo = f"⚠️ Fallo el envío de correo: {e}"
                                             else: msg_correo = "ℹ️ El socio no tiene un correo registrado."
@@ -2231,10 +2383,8 @@ elif st.session_state.vista == 'tesorero':
                                                 if m == 1: a += 1
                                                 
                                                 if get_config("amort_porcentaje_activo", "NO", str) == "SI":
-                                                    m_pct = m_proy * (get_config("amort_porcentaje_valor", 0.0) / 100.0)
-                                                    m_pct = float(math.ceil(m_pct))
-                                                    if m_pct < m_min: m_pct = float(m_min)
-                                                    am = min(m_pct, sp)
+                                                    m_pct = float(math.ceil(m_proy * (get_config("amort_porcentaje_valor", 0.0) / 100.0)))
+                                                    am = min(m_pct if m_pct >= m_min else float(m_min), sp)
                                                 else:
                                                     am = min(m_min, sp)
                                                     
@@ -2251,11 +2401,21 @@ elif st.session_state.vista == 'tesorero':
                                             if item['correo']:
                                                 try:
                                                     pdf_correo = generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, incluir_contrato=False)
-                                                    REMITENTE = "lacolmenabanco@gmail.com"; PASSWORD = "fvux bnfk qbzv brad"
-                                                    msg = MIMEMultipart(); msg['Subject'] = "Voucher y Cronograma de Préstamo - Banquito La Colmena"; msg['From'] = f"Banquito La Colmena <{REMITENTE}>"; msg['To'] = item['correo']
+                                                    REMITENTE = "lacolmenabanco@gmail.com"
+                                                    PASSWORD = "fvux bnfk qbzv brad"
+                                                    msg = MIMEMultipart()
+                                                    msg['Subject'] = "Voucher y Cronograma de Préstamo - Banquito La Colmena"
+                                                    msg['From'] = f"Banquito La Colmena <{REMITENTE}>"
+                                                    msg['To'] = item['correo']
                                                     msg.attach(MIMEText(f"Estimado/a {item['socio']},\n\nSu préstamo parcial ha sido aprobado exitosamente. Adjuntamos el voucher y su nuevo cronograma de pagos.\n\nAtentamente,\nLa Junta Directiva.", 'plain', 'utf-8'))
-                                                    adj = MIMEApplication(pdf_correo, _subtype="pdf"); adj.add_header('Content-Disposition', 'attachment', filename=f"Prestamo_{pdni2}.pdf"); msg.attach(adj)
-                                                    server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(REMITENTE, PASSWORD); server.send_message(msg); server.quit()
+                                                    adj = MIMEApplication(pdf_correo, _subtype="pdf")
+                                                    adj.add_header('Content-Disposition', 'attachment', filename=f"Prestamo_{pdni2}.pdf")
+                                                    msg.attach(adj)
+                                                    server = smtplib.SMTP('smtp.gmail.com', 587)
+                                                    server.starttls()
+                                                    server.login(REMITENTE, PASSWORD)
+                                                    server.send_message(msg)
+                                                    server.quit()
                                                     msg_correo = "✅ Correo enviado con éxito al socio (Voucher + Cronograma)."
                                                 except Exception as e: msg_correo = f"⚠️ Fallo el envío de correo: {e}"
                                             else: msg_correo = "ℹ️ El socio no tiene un correo registrado."
@@ -2266,7 +2426,6 @@ elif st.session_state.vista == 'tesorero':
                                         if cb2.button("❌ ANULAR", key=f"anular_parc_{item['id']}", use_container_width=True):
                                             db_query("UPDATE solicitudes_prestamo SET estado='RECHAZADO' WHERE id=?", (item['id'],), fetch=False)
                                             st.rerun()
-                                            
                                     else:
                                         st.error("❌ Sin Fondos")
                                         if st.button("🗑️ ANULAR / BORRAR", key=f"rech_{item['id']}", use_container_width=True):
@@ -2406,6 +2565,7 @@ elif st.session_state.vista == 'tesorero':
                 n_b = soc_b[0][0].split()[0] if soc_b[0][0] else ""
                 a_b = soc_b[0][1].split()[0] if soc_b[0][1] else ""
                 nombre_fmt_b = f"{n_b} {a_b}".strip()
+                
                 query += " AND (tipo LIKE ? OR tipo LIKE ?)"
                 params.extend([f"%{caja_f_dni}%", f"%{nombre_fmt_b}%"])
             else:
