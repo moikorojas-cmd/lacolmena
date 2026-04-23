@@ -959,24 +959,27 @@ elif st.session_state.socio_logged_in:
     s_dni = st.session_state.socio_dni
     soc_data = db_query("SELECT nombres, apellidos, acciones FROM socios WHERE dni=?", (s_dni,))
     if not soc_data:
-        st.session_state.socio_logged_in = False; st.rerun()
+        st.session_state.socio_logged_in = False
+        st.rerun()
         
     acc_socio = soc_data[0][2]
     
     st.write(f"**ACCIONES ACTIVAS:** {acc_socio}")
     
-    # --- MOVIDO AQUÍ: ALERTA DE REUNIÓN ---
     f_reu_str = get_config("proxima_reunion", "2000-01-01", str)
     h_reu_str = get_config("proxima_reunion_hora", "16:00", str)
-    try: f_reu_dt = datetime.strptime(f_reu_str, "%Y-%m-%d").date()
-    except: f_reu_dt = date(2000, 1, 1)
+    try: 
+        f_reu_dt = datetime.strptime(f_reu_str, "%Y-%m-%d").date()
+    except: 
+        f_reu_dt = date(2000, 1, 1)
     
     if f_reu_dt > date(2000, 1, 1) and date.today() <= f_reu_dt:
-        try: h_format = datetime.strptime(h_reu_str, '%H:%M').strftime('%I:%M %p')
-        except: h_format = h_reu_str
+        try: 
+            h_format = datetime.strptime(h_reu_str, '%H:%M').strftime('%I:%M %p')
+        except: 
+            h_format = h_reu_str
         st.warning(f"📅 **PRÓXIMA REUNIÓN CONFIRMADA:** EL DÍA **{f_reu_dt.strftime('%d/%m/%Y')}** A LAS **{h_format}**.")
 
-    # ALERTA DE CUMPLEAÑOS PRIVADA Y CALENDARIO (Solo visible logueado)
     jugar_cumple = get_config("jugar_cumpleanos", "SI", str)
     cuota_c = get_config("cuota_cumpleanos", 0.0)
     a_pagar_cumple = 0.0
@@ -1018,7 +1021,6 @@ elif st.session_state.socio_logged_in:
             else:
                 st.info("No hay fechas registradas.")
                 
-    # HISTORIAL DE COMUNICADOS (Solo visible logueado y minimizado)
     coms = db_query("SELECT mensaje, fecha FROM comunicados WHERE mensaje NOT LIKE '%anulación%' AND mensaje NOT LIKE '%anuló%' ORDER BY id DESC")
     if coms:
         with st.expander("📢 HISTORIAL DE COMUNICADOS (MURO DE AVISOS)", expanded=False):
@@ -1053,8 +1055,10 @@ elif st.session_state.socio_logged_in:
                     m_pct = float(math.ceil(m_pct))
                     if m_pct < m_min_fijo: m_pct = float(m_min_fijo)
                     
-                    if d_conteo < 3 and mes_actual <= mes_limite: min_req = min(m_min_fijo, d_saldo)
-                    else: min_req = min(m_pct, d_saldo)
+                    if d_conteo < 3 and mes_actual <= mes_limite: 
+                        min_req = min(m_min_fijo, d_saldo)
+                    else: 
+                        min_req = min(m_pct, d_saldo)
                 else:
                     min_req = min(m_min_fijo, d_saldo)
                 
@@ -1268,9 +1272,63 @@ elif st.session_state.socio_logged_in:
 elif st.session_state.vista == 'superadmin':
     render_top_header()
     
-    t1, t2, t3 = st.tabs(["📝 REGISTRAR SOCIOS FUNDADORES", "⚙️ ASIGNAR JUNTA DIRECTIVA / REGLAS", "🔑 ACCESOS DE SOCIOS"])
-    
-    with t1:
+    opciones_menu_t = ["📊 PANEL DE CONTROL", "📝 REGISTRAR SOCIOS", "⚙️ ASIGNAR JUNTA Y REGLAS", "🔑 ACCESOS DE SOCIOS", "🗳️ VOTACIONES"]
+    menu_t = st.radio("MÓDULOS DEL ADMINISTRADOR:", opciones_menu_t, horizontal=True)
+
+    if menu_t == "📊 PANEL DE CONTROL":
+        st.subheader("📊 DASHBOARD ANALÍTICO GLOBAL")
+        
+        s_tot = float(db_query("SELECT SUM(monto) FROM movimientos")[0][0] or 0.0)
+        i_cc = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Ingreso Caja Chica%' OR tipo = 'Depósito Caja'")[0][0] or 0.0
+        e_cc = abs(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Egreso Caja Chica%' OR tipo = 'Retiro Caja'")[0][0] or 0.0)
+        f_cc = i_cc - e_cc
+        c_prin = s_tot - f_cc
+        
+        prestado_bd = db_query("SELECT SUM(saldo_actual) FROM prestamos WHERE estado='ACTIVO'")
+        dinero_prestado = float(prestado_bd[0][0]) if prestado_bd and prestado_bd[0][0] else 0.0
+        
+        patrimonio_total = c_prin + f_cc + dinero_prestado
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("CAJA PRINCIPAL (FÍSICO)", f"S/ {c_prin:.2f}")
+        c2.metric("DINERO EN LA CALLE", f"S/ {dinero_prestado:.2f}")
+        c3.metric("CAJA CHICA", f"S/ {f_cc:.2f}")
+        c4.metric("PATRIMONIO TOTAL", f"S/ {patrimonio_total:.2f}")
+        
+        st.divider()
+        
+        col_chart1, col_chart2 = st.columns(2)
+        
+        with col_chart1:
+            st.write("#### 🥧 DISTRIBUCIÓN DEL PORTAFOLIO")
+            if patrimonio_total > 0:
+                source = pd.DataFrame({
+                    "Categoría": ["Efectivo Caja Principal", "Dinero Prestado", "Caja Chica"],
+                    "Monto": [c_prin, dinero_prestado, f_cc]
+                })
+                base = alt.Chart(source).encode(
+                    theta=alt.Theta("Monto:Q", stack=True),
+                    color=alt.Color("Categoría:N", scale=alt.Scale(scheme='set2'), legend=alt.Legend(title="Fondo")),
+                    tooltip=["Categoría", "Monto"]
+                )
+                pie = base.mark_arc(innerRadius=50, outerRadius=120)
+                st.altair_chart(pie, use_container_width=True)
+            else:
+                st.info("No hay fondos registrados en el sistema.")
+                
+        with col_chart2:
+            st.write("#### 📈 CRECIMIENTO DE APORTES (HISTÓRICO)")
+            movs_aportes = db_query("SELECT fecha, monto FROM movimientos WHERE tipo LIKE '%Aporte%'")
+            if movs_aportes:
+                df_ap = pd.DataFrame(movs_aportes, columns=["fecha", "monto"])
+                df_ap['fecha'] = pd.to_datetime(df_ap['fecha'])
+                df_ap['Mes'] = df_ap['fecha'].dt.strftime('%Y-%m')
+                df_agrupado = df_ap.groupby('Mes')['monto'].sum().reset_index()
+                st.bar_chart(df_agrupado.set_index('Mes'), color="#2563eb")
+            else:
+                st.info("No hay aportes registrados en el sistema.")
+
+    elif menu_t == "📝 REGISTRAR SOCIOS":
         with st.form("form_fun"):
             c1, c2 = st.columns(2)
             fdni = c1.text_input("DNI*")
@@ -1284,7 +1342,7 @@ elif st.session_state.vista == 'superadmin':
             facc = c1.number_input("Acciones Iniciales", 1, 4, 1)
             fap_ini = c2.number_input("Aporte Inicial por Acción (S/)", 0.0)
             
-            if st.form_submit_button("GUARDAR FUNDADOR", type="primary"):
+            if st.form_submit_button("GUARDAR SOCIO/FUNDADOR", type="primary"):
                 if fdni and fnom:
                     try:
                         db_query("INSERT INTO socios (dni, nombres, apellidos, telefono, direccion, correo, sexo, fecha_nacimiento, es_fundador, acciones, fecha_ingreso) VALUES (?,?,?,?,?,?,?,?,1,?,?)", 
@@ -1292,12 +1350,12 @@ elif st.session_state.vista == 'superadmin':
                         tot = facc * fap_ini
                         db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (tot,), fetch=False)
                         if tot>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto) VALUES (1, ?, ?)", (f"Aporte Inicial {fdni} ({facc} acc)", tot), fetch=False)
-                        st.success("Fundador registrado correctamente en el padrón y caja principal.")
+                        st.success("Socio registrado correctamente en el padrón y caja principal.")
                     except sqlite3.IntegrityError: 
                         st.error("Error: Ese DNI ya existe en la base de datos.")
                 else: st.warning("DNI y Nombres son campos obligatorios.")
                 
-    with t2:
+    elif menu_t == "⚙️ ASIGNAR JUNTA Y REGLAS":
         ffun_str = get_config("fecha_fundacion", datetime.now().strftime("%Y-%m-%d"), str)
         try:
             ffun_date = datetime.strptime(ffun_str, "%Y-%m-%d").date()
@@ -1370,7 +1428,7 @@ elif st.session_state.vista == 'superadmin':
                 
             st.success("Configuración guardada con éxito.")
             
-    with t3:
+    elif menu_t == "🔑 ACCESOS DE SOCIOS":
         st.write("Si un socio perdió acceso a su correo o no puede entrar a su portal, puedes ver su contraseña actual o asignarle una nueva aquí.")
         
         if 'pwd_success_msg' in st.session_state:
@@ -1409,6 +1467,43 @@ elif st.session_state.vista == 'superadmin':
                             st.warning("La contraseña debe tener al menos 4 caracteres.")
         else:
             st.info("No hay socios registrados en el sistema.")
+
+    elif menu_t == "🗳️ VOTACIONES":
+        st.subheader("🗳️ GESTIÓN DE VOTACIONES GLOBALES")
+        
+        t_v1, t_v2 = st.tabs(["➕ CREAR NUEVA CONSULTA", "📊 RESULTADOS Y CIERRE"])
+        
+        with t_v1:
+            st.write("Crea una consulta para que los socios voten desde su celular. El voto es estrictamente 1 por persona.")
+            v_preg = st.text_input("Pregunta a consultar a los socios:", placeholder="Ej: ¿Subimos la cuota de inscripción a S/ 50.00?")
+            v_ops = st.text_input("Opciones de respuesta separadas por coma:", value="SÍ, NO, ABSTENCIÓN")
+            if st.button("🚀 PUBLICAR VOTACIÓN", type="primary"):
+                if v_preg and v_ops:
+                    db_query("INSERT INTO votaciones (pregunta, opciones, fecha_creacion) VALUES (?,?,?)", (v_preg, v_ops, datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
+                    st.success("Votación creada y publicada con éxito. Los socios ya pueden votar.")
+                else:
+                    st.warning("Completa la pregunta y las opciones.")
+                    
+        with t_v2:
+            st.write("Cierra las urnas y revisa los resultados finales.")
+            vot_abiertas = db_query("SELECT id, pregunta, fecha_creacion FROM votaciones WHERE estado='ABIERTA' ORDER BY id DESC")
+            if vot_abiertas:
+                for v_id, preg, f_crea in vot_abiertas:
+                    with st.container(border=True):
+                        st.write(f"**{preg}** (Creada el {f_crea})")
+                        
+                        resultados = db_query("SELECT opcion, COUNT(*) as votos FROM votos WHERE id_votacion=? GROUP BY opcion", (v_id,))
+                        if resultados:
+                            df_res = pd.DataFrame(resultados, columns=["Opción", "Votos (1 x Socio)"])
+                            st.bar_chart(df_res.set_index("Opción"), color="#2563eb")
+                        else:
+                            st.info("Aún no hay votos registrados.")
+                            
+                        if st.button("🔒 CERRAR URNA PARA ESTA CONSULTA", key=f"cierra_{v_id}"):
+                            db_query("UPDATE votaciones SET estado='CERRADA' WHERE id=?", (v_id,), fetch=False)
+                            st.rerun()
+            else:
+                st.info("No hay votaciones activas en este momento.")
 
 # -----------------------------------------------------------------------------
 # VISTA: SECRETARÍA (MESA DE PARTES Y GESTIÓN)
@@ -1654,13 +1749,13 @@ elif st.session_state.vista == 'secretario':
 elif st.session_state.vista == 'tesorero':
     render_top_header()
     
-    opciones_menu_t = ["📊 DASHBOARD", "👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "↩️ ANULAR OPERACIÓN"]
+    opciones_menu_t = ["📊 PANEL DE CONTROL", "👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "↩️ ANULAR OPERACIÓN"]
     if get_config("jugar_cumpleanos", "SI", str) == "SI":
         opciones_menu_t.insert(5, "🎂 CUMPLEAÑOS")
         
     menu_t = st.radio("MÓDULOS FINANCIEROS:", opciones_menu_t, horizontal=True)
     
-    if menu_t == "📊 DASHBOARD":
+    if menu_t == "📊 PANEL DE CONTROL":
         st.subheader("📊 DASHBOARD ANALÍTICO DE TESORERÍA")
         
         # Extracción de KPIs
