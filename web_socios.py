@@ -77,7 +77,7 @@ except Exception as e:
 # 2. FUNCIONES NÚCLEO (DB, CORREOS, UTILIDADES)
 # =============================================================================
 # Pega aquí tu Connection String de Supabase
-DB_URL = "postgresql://postgres:Moiko86122024@db.odmsuphroyvueeodvtsx.supabase.co:6543/postgres"
+DB_URL = "postgresql://postgres.odmsuphroyvueeodvtsx:Moiko10042024@aws-1-us-east-2.pooler.supabase.com:6543/postgres"
 
 def db_query(query, params=(), fetch=True):
     with psycopg2.connect(DB_URL) as conn:
