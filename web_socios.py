@@ -1,7 +1,8 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import math
 from datetime import datetime, date, timedelta
+from decimal import Decimal
 import pandas as pd
 import os
 import smtplib
@@ -13,6 +14,10 @@ from email.mime.application import MIMEApplication
 import urllib.parse
 import streamlit.components.v1 as components
 import altair as alt
+import io
+import zipfile
+import sqlite3
+import os
 
 try:
     from fpdf import FPDF
@@ -24,21 +29,15 @@ except ImportError:
 # =============================================================================
 st.set_page_config(page_title="Banquito La Colmena", page_icon="🐝", layout="wide", initial_sidebar_state="collapsed")
 
-# Función para decimales con PUNTO y miles con COMA (Ej: 1,234.56)
 def f_m(valor):
     if valor is None: return "0.00"
     return "{:,.2f}".format(float(valor))
 
-# Diseño Gráfico Profesional, Amplio, Mayúsculas y Footer Fijo
 st.markdown("""
     <style>
-    /* Ocultar barra lateral y botón de menú permanentemente */
     [data-testid="collapsedControl"] { display: none !important; }
     [data-testid="stSidebar"] { display: none !important; }
-    
-    /* 🛠️ FIX: FORZAR SCROLL PARA EVITAR SALTOS EN EL MENÚ */
     [data-testid="stAppViewContainer"] { overflow-y: scroll !important; }
-    
     .stApp { background: linear-gradient(135deg, #fcfaf5 0%, #f0f4fd 100%); }
     .block-container { padding-top: 2rem; padding-bottom: 80px !important; max-width: 95% !important;}
     h1, h2, h3, h4, h5, h6 { color: #1e3a8a !important; font-weight: 800 !important; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important; text-transform: uppercase !important; letter-spacing: 0.5px; }
@@ -46,14 +45,11 @@ st.markdown("""
     .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     div[data-testid="stTabs"] button { font-size: 18px !important; font-weight: 800 !important; color: #64748b; text-transform: uppercase !important; padding: 15px 25px !important; }
     div[data-testid="stTabs"] button[aria-selected="true"] { color: #2563eb; border-bottom-color: #2563eb; }
-    
-    /* Menús (Radios) ESTILO TARJETAS Y CENTRADOS PARA EVITAR SALTOS */
     div[role="radiogroup"] { gap: 15px; flex-wrap: wrap; justify-content: center; }
     div[role="radiogroup"] > label { padding: 15px 25px !important; background-color: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     div[role="radiogroup"] > label:hover { border-color: #2563eb; background-color: #f8fafc; transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.1); }
     div[role="radiogroup"] > label[data-checked="true"] { border-color: #2563eb; background-color: #eff6ff; box-shadow: 0 4px 10px rgba(37,99,235,0.2); }
     .stRadio p { font-size: 16px !important; font-weight: 800 !important; text-transform: uppercase !important; color: #1e3a8a; margin: 0; }
-    
     .stButton>button { border-radius: 8px; font-weight: 700 !important; font-size: 16px !important; text-transform: uppercase !important; transition: all 0.2s ease-in-out; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-color: #fbbf24; color: #b45309; }
     div[data-testid="stExpander"] { border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 4px rgba(0,0,0,0.02); background-color: #ffffff;}
@@ -63,96 +59,64 @@ st.markdown("""
     <div class="fixed-footer">Banquito La Colmena V 1.0 / Ing. Juan Moisés Rojas De La Torre / CIP: 273739.</div>
 """, unsafe_allow_html=True)
 
-def inicializar_db():
-    with sqlite3.connect("banquito.db") as conn:
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, usuario TEXT UNIQUE, password TEXT, rol TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS cuentas (id INTEGER PRIMARY KEY AUTOINCREMENT, id_usuario INTEGER, saldo REAL DEFAULT 0.0, FOREIGN KEY(id_usuario) REFERENCES usuarios(id))''')
-        c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_usuario INTEGER, tipo TEXT, monto REAL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS socios (id INTEGER PRIMARY KEY AUTOINCREMENT, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS tramites (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id INTEGER PRIMARY KEY AUTOINCREMENT, mensaje TEXT, fecha TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS votos (id INTEGER PRIMARY KEY AUTOINCREMENT, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
-        
-        for query in [
-            '''ALTER TABLE socios ADD COLUMN fecha_nacimiento TEXT''',
-            '''ALTER TABLE tramites ADD COLUMN respuesta TEXT''',
-            '''ALTER TABLE prestamos ADD COLUMN conteo_minimos INTEGER DEFAULT 0''',
-            '''ALTER TABLE socios ADD COLUMN password TEXT'''
-        ]:
-            try: c.execute(query)
-            except: pass
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS cumpleanos_pagos (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER, mes INTEGER, dni_cumpleanero TEXT, dni_aportante TEXT, monto REAL, fecha_pago TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS solicitudes_prestamo (id INTEGER PRIMARY KEY AUTOINCREMENT, dni_socio TEXT, accion INTEGER, monto REAL, fecha TEXT, estado TEXT DEFAULT 'PENDIENTE')''')
-        c.execute('''CREATE TABLE IF NOT EXISTS historial_anulaciones (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, autorizador TEXT)''')
+# 🔐 TU LLAVE MAESTRA A LA NUBE
+DB_URL = "postgresql://postgres.ykumtkfvstlhfvmtnory:Moiko861224R@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
 
-        try:
-            hoy_str = datetime.now().strftime("%Y-%m-%d")
-            configs = [
-                ("fecha_fundacion", hoy_str), ("monto_minimo_capital", "50.0"), ("cuota_inscripcion", "20.0"),
-                ("interes_prestamo", "1.5"), ("aporte_mensual", "100.0"), ("presidente", "No asignado"),
-                ("correo_presidente", ""), ("tesorero", "No asignado"), ("secretario", "No asignado"),
-                ("password_presidente", "123456"), ("proxima_reunion", "2000-01-01"), ("proxima_reunion_hora", "16:00"),
-                ("jugar_cumpleanos", "SI"), ("cuota_cumpleanos", "50.0"), ("tope_prestamo_activo", "SI"),
-                ("tope_prestamo_monto", "3000.0"), ("amort_porcentaje_activo", "SI"), ("amort_porcentaje_valor", "2.0"),
-                ("mes_limite_minimos", "9")
-            ]
-            for clave, valor in configs:
-                c.execute("INSERT OR IGNORE INTO configuracion (clave, valor) VALUES (?, ?)", (clave, valor))
+@st.cache_resource
+def obtener_conexion():
+    return psycopg2.connect(DB_URL)
 
-            c.execute("INSERT OR IGNORE INTO usuarios (id, nombre, usuario, password, rol) VALUES (1, 'Administrador Principal', 'admin', 'admin123', 'superadmin')")
-            c.execute("INSERT OR IGNORE INTO cuentas (id_usuario, saldo) VALUES (1, 0.0)")
-        except: pass
-        conn.commit()
-
-inicializar_db()
-
-# =============================================================================
-# 2. FUNCIONES NÚCLEO (DB, CORREOS, UTILIDADES)
-# =============================================================================
 def db_query(query, params=(), fetch=True):
-    with sqlite3.connect("banquito.db") as conn:
-        c = conn.cursor()
-        c.execute(query, params)
-        if fetch: return c.fetchall()
-        conn.commit()
-        return c.lastrowid
+    try:
+        # Motor PostgreSQL + Ignorar Mayúsculas/Minúsculas
+        query_pg = query.replace('%', '%%').replace('?', '%s').replace(' LIKE ', ' ILIKE ')
+        conn = obtener_conexion()
+        if conn.closed:
+            st.cache_resource.clear()
+            conn = obtener_conexion()
 
+        with conn.cursor() as c:
+            c.execute(query_pg, params)
+            if fetch: 
+                res = c.fetchall()
+                if not res and "SUM" in query_pg: 
+                    return [(0.0,)]
+                
+                # TRADUCTOR UNIVERSAL: Convierte Fechas a Texto y Decimals a Floats
+                lista_final = []
+                for fila in res:
+                    fila_arreglada = tuple(
+                        item.strftime("%Y-%m-%d %H:%M:%S") if isinstance(item, (datetime, date)) 
+                        else (float(item) if isinstance(item, Decimal) else item)
+                        for item in fila
+                    )
+                    lista_final.append(fila_arreglada)
+                return lista_final
+                
+            conn.commit()
+            return None
+    except Exception as e:
+        st.cache_resource.clear() 
+        return [(0.0,)] if fetch and "SUM" in query else []
+    
 def get_config(clave, default, tipo=float):
     res = db_query("SELECT valor FROM configuracion WHERE clave=?", (clave,))
     return tipo(res[0][0]) if res else tipo(default)
 
-# -- FUNCIÓN MAESTRA DE CORREOS --
 def enviar_correo_generico(destinatario, asunto, cuerpo, pdf_bytes=None, pdf_nombre=None):
-    if not destinatario or str(destinatario).strip() == "":
-        return False, "ℹ️ Socio sin correo registrado."
+    if not destinatario or str(destinatario).strip() == "": return False, "ℹ️ Socio sin correo registrado."
     try:
-        REMITENTE = "lacolmenabanco@gmail.com"
-        PASSWORD = "fvux bnfk qbzv brad"
+        REMITENTE, PASSWORD = "lacolmenabanco@gmail.com", "fvux bnfk qbzv brad"
         msg = MIMEMultipart()
-        msg['Subject'] = asunto
-        msg['From'] = f"Banquito La Colmena <{REMITENTE}>"
-        msg['To'] = destinatario
+        msg['Subject'], msg['From'], msg['To'] = asunto, f"Banquito La Colmena <{REMITENTE}>", destinatario
         msg.attach(MIMEText(cuerpo, 'plain', 'utf-8'))
-        
         if pdf_bytes and pdf_nombre:
             adj = MIMEApplication(pdf_bytes, _subtype="pdf")
             adj.add_header('Content-Disposition', 'attachment', filename=pdf_nombre)
             msg.attach(adj)
-            
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(REMITENTE, PASSWORD)
-        server.send_message(msg)
-        server.quit()
+        server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(REMITENTE, PASSWORD); server.send_message(msg); server.quit()
         return True, "✅ Correo enviado con éxito."
-    except Exception as e:
-        return False, f"⚠️ Fallo el envío de correo: {e}"
+    except Exception as e: return False, f"⚠️ Fallo el envío de correo: {e}"
 
 def enviar_alerta_correo(usuario_intruso):
     correo_presi = get_config("correo_presidente", "", str)
@@ -163,11 +127,7 @@ def enviar_alerta_correo(usuario_intruso):
 
 def format_fecha(fecha_str):
     if not fecha_str: return ""
-    try:
-        if len(fecha_str) > 10:
-            return datetime.strptime(fecha_str, "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M:%S")
-        else:
-            return datetime.strptime(fecha_str[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    try: return datetime.strptime(fecha_str, "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M:%S") if len(fecha_str) > 10 else datetime.strptime(fecha_str[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
     except: return fecha_str
 
 def format_movimiento(texto):
@@ -177,74 +137,88 @@ def format_movimiento(texto):
     for d in numeros:
         if len(d) >= 8:
             soc = db_query("SELECT nombres, apellidos FROM socios WHERE dni=?", (d,))
-            if soc:
-                nom = soc[0][0].split()[0] if soc[0][0] else ""
-                ape = soc[0][1].split()[0] if soc[0][1] else ""
-                texto_out = re.sub(rf'\b{d}\b', f"{nom} {ape}".strip(), texto_out)
+            if soc: texto_out = re.sub(rf'\b{d}\b', f"{soc[0][0].split()[0] if soc[0][0] else ''} {soc[0][1].split()[0] if soc[0][1] else ''}".strip(), texto_out)
     return texto_out
 
-def truncar_a_un_decimal(numero):
-    return math.floor(numero * 10) / 10.0
+def truncar_a_un_decimal(numero): return math.floor(numero * 10) / 10.0
 
 def calcular_nivelacion_por_accion():
+    # 1. Obtenemos la fecha de fundación y reglas actuales
+    f_fundacion_str = get_config("fecha_fundacion", datetime.now().strftime("%Y-%m-%d"), str)
+    try: f_fundacion = datetime.strptime(f_fundacion_str[:10], "%Y-%m-%d")
+    except: f_fundacion = datetime.now()
+    
+    hoy = datetime.now()
+    meses_transcurridos = (hoy.year - f_fundacion.year) * 12 + (hoy.month - f_fundacion.month) + 1
+    if meses_transcurridos < 1: meses_transcurridos = 1
+    
+    cuota_actual = get_config("aporte_mensual", 0.0)
+    tasa = get_config("interes_prestamo", 0.0) / 100.0
+
+    # 2. Buscamos al "Socio Modelo" (el que tiene más capital real ahorrado)
     socios_data = db_query("SELECT dni, acciones FROM socios WHERE acciones > 0")
-    max_cap_por_accion = 0.0
-    socio_max_dni = None
-    if not socios_data: return 0.0, 0.0
+    max_cap_por_accion, socio_max_dni = 0.0, None
+    
+    if not socios_data:
+        # Banco vacío: Nivelación = Solo los meses pasados a la cuota actual
+        return float(meses_transcurridos * cuota_actual), 0.0
         
     for s_dni, s_acc in socios_data:
         ap_socio = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{s_dni}%",))[0][0] or 0.0
         cap_actual_accion = float(ap_socio) / float(s_acc)
-        if cap_actual_accion > max_cap_por_accion:
+        if cap_actual_accion >= max_cap_por_accion: 
             max_cap_por_accion = cap_actual_accion
             socio_max_dni = s_dni
-            
-    int_global = 0.0
-    int_por_accion = 0.0
+
+    int_global, int_por_accion, meses_pagados = 0.0, 0.0, 0
+    cap_esperado = max_cap_por_accion
+
+    # 3. Calculamos la realidad histórica del Socio Modelo
     if socio_max_dni:
         movs = db_query("SELECT fecha, monto FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{socio_max_dni}%",))
         aportes_mes = {}
         for f, m in movs:
-            mes = f[:7]
-            aportes_mes[mes] = aportes_mes.get(mes, 0.0) + float(m)
+            mes_key = f[:7]
+            aportes_mes[mes_key] = aportes_mes.get(mes_key, 0.0) + float(m)
         
-        tasa = get_config("interes_prestamo", 0.0) / 100.0
-        mes_actual = datetime.now().strftime("%Y-%m")
+        meses_pagados = len(aportes_mes.keys())
+        mes_actual_str = hoy.strftime("%Y-%m")
         cap_global = 0.0
+        
+        # Reconstruimos los intereses que este socio debió generar históricamente
         for mes in sorted(aportes_mes.keys()):
             cap_global += aportes_mes[mes]
-            if mes < mes_actual: int_global += cap_global * tasa
+            if mes < mes_actual_str: 
+                int_global += cap_global * tasa
                 
         acc_modelo = db_query("SELECT acciones FROM socios WHERE dni=?", (socio_max_dni,))[0][0]
         int_por_accion = int_global / float(acc_modelo)
-    return float(max_cap_por_accion), float(int_por_accion)
+        
+    # 4. EL TOQUE MAESTRO: Ajustamos solo los meses que faltan a la regla de hoy
+    meses_faltantes = meses_transcurridos - meses_pagados
+    if meses_faltantes > 0:
+        cap_esperado += (meses_faltantes * cuota_actual)
+        
+    return float(cap_esperado), float(int_por_accion)
 
 def obtener_estado_cumpleanos():
     anio_act, mes_act = datetime.now().year, datetime.now().month
     meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     socios_c = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
     lista_cumples = []
-    
     for s_dni, s_nom, s_ape, fnac in socios_c:
         if fnac:
             try:
                 dt_nac = datetime.strptime(fnac, "%Y-%m-%d")
-                nombre_fmt = f"{s_nom.split()[0]} {s_ape.split()[0]}"
-                estado, fecha_entrega = "PENDIENTE", "---"
+                edad_cumple = anio_act - dt_nac.year
+                if edad_cumple < 0: edad_cumple = 0
+                nombre_fmt, estado, fecha_entrega = f"{s_nom.split()[0]} {s_ape.split()[0]}", "PENDIENTE", "---"
                 entrega_bd = db_query("SELECT fecha FROM movimientos WHERE tipo LIKE ? AND monto < 0", (f"Entrega de Pozo Cumpleaños - {nombre_fmt} ({anio_act})%",))
-                
-                if entrega_bd:
-                    estado, fecha_entrega = "ENTREGADO", format_fecha(entrega_bd[0][0])
-                elif dt_nac.month == mes_act:
-                    estado = "EN RECAUDACIÓN"
-                    
-                lista_cumples.append({
-                    "Mes_Num": dt_nac.month, "Día": dt_nac.day, "Mes": meses_nom[dt_nac.month - 1],
-                    "Socio": nombre_fmt, "DNI": s_dni, "Estado": estado, "Fecha de Entrega": fecha_entrega
-                })
+                if entrega_bd: estado, fecha_entrega = "ENTREGADO", format_fecha(entrega_bd[0][0])
+                elif dt_nac.month == mes_act: estado = "EN RECAUDACIÓN"
+                lista_cumples.append({"Mes_Num": dt_nac.month, "Día": dt_nac.day, "Mes": meses_nom[dt_nac.month - 1], "Socio": nombre_fmt, "DNI": s_dni, "Estado": estado, "Fecha de Entrega": fecha_entrega})
             except: pass
-    lista_cumples.sort(key=lambda x: (x["Mes_Num"], x["Día"]))
-    return lista_cumples
+    lista_cumples.sort(key=lambda x: (x["Mes_Num"], x["Día"])); return lista_cumples
 
 # =============================================================================
 # 3. LÓGICA DE PDFS
@@ -255,45 +229,34 @@ def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
     pdf.cell(0, 6, f"Rango de fechas: {format_fecha(str(f_ini))} al {format_fecha(str(f_fin))}", ln=True)
     if dni_filtro: pdf.cell(0, 6, f"Filtro aplicado (DNI/Nombre): {dni_filtro}", ln=True)
     pdf.cell(0, 6, f"Fecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ln=True); pdf.ln(5)
-    
     pdf.set_font("Courier", 'B', 9); pdf.cell(35, 6, "FECHA", border=1, align='C'); pdf.cell(125, 6, "DETALLE DE OPERACION", border=1, align='C'); pdf.cell(30, 6, "MONTO (S/)", border=1, align='C'); pdf.ln()
-    
-    pdf.set_font("Courier", '', 8); t_ing, t_egr = 0.0, 0.0
+    pdf.set_font("Courier", '', 8)
+    t_ing, t_egr = 0.0, 0.0
     for f, d, m in movimientos_fmt:
         d_clean = d.encode('latin-1', 'ignore').decode('latin-1')
         if len(d_clean) > 65: d_clean = d_clean[:62] + "..."
         pdf.cell(35, 6, f, border=1); pdf.cell(125, 6, d_clean, border=1); pdf.cell(30, 6, f"{m:.2f}", border=1, align='R'); pdf.ln()
         if m > 0: t_ing += m 
         else: t_egr += abs(m)
-            
-    pdf.ln(5); pdf.set_font("Courier", 'B', 10); pdf.cell(0, 6, f"TOTAL INGRESOS: S/ {t_ing:.2f}", ln=True); pdf.cell(0, 6, f"TOTAL EGRESOS:  S/ {t_egr:.2f}", ln=True)
-    pdf.cell(0, 6, f"BALANCE NETO:   S/ {t_ing - t_egr:.2f}", ln=True)
-    f_n = f"Caja_Temp.pdf"; pdf.output(f_n)
+    pdf.ln(5); pdf.set_font("Courier", 'B', 10); pdf.cell(0, 6, f"TOTAL INGRESOS: S/ {t_ing:.2f}", ln=True); pdf.cell(0, 6, f"TOTAL EGRESOS:  S/ {t_egr:.2f}", ln=True); pdf.cell(0, 6, f"BALANCE NETO:   S/ {t_ing - t_egr:.2f}", ln=True)
+    f_n = "Caja_Temp.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as fi: b = fi.read()
-    os.remove(f_n)
-    return b
+    os.remove(f_n); return b
 
 def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fin=None):
     tasa, m_min = get_config("interes_prestamo", 0.0) / 100.0, get_config("monto_minimo_capital", 50.0)
     res_p = db_query("SELECT saldo_actual FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (dni, acc_num))
     saldo_hoy = res_p[0][0] if res_p else 0.0
     filtro = f"%{dni}%(Acción {acc_num})%"
-    
     if f_inicio and f_fin:
         movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE tipo LIKE ? AND date(fecha) >= ? AND date(fecha) <= ? ORDER BY fecha ASC", (filtro, f_inicio, f_fin))
         rango_str = f"Rango: {format_fecha(str(f_inicio))} al {format_fecha(str(f_fin))}"
     else:
         movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE tipo LIKE ? ORDER BY fecha ASC", (filtro,))
         rango_str = "Rango: Histórico Completo"
-        
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=9)
-    header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANQUITO LA COLMENA 🐝\n" + "="*85 + "\n"
-    header += f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n"
-    header += "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n"
-    header += f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
-    
+    header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANQUITO LA COLMENA 🐝\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     reporte_texto, saldo_acumulado, historial_agrupado = header, 0.0, {}
-    
     for m in movs:
         f, t, mon = m[0], m[1], m[2]; f_dia = f[:10] 
         if "Préstamo" in t:
@@ -305,7 +268,6 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
             if key not in historial_agrupado: historial_agrupado[key] = {'fecha': f_dia, 'cap': 0.0, 'int': 0.0, 'tipo': 'PAGO'}
             if "Interés" in t: historial_agrupado[key]['int'] += abs(mon)
             elif "Pago Cuota" in t: historial_agrupado[key]['cap'] += abs(mon)
-        
     for key in sorted(historial_agrupado.keys()):
         d_mov = historial_agrupado[key]
         f_display = format_fecha(d_mov['fecha'])
@@ -314,34 +276,27 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
             reporte_texto += f"{f_display:<10} | {'NUEVO PRÉSTAMO':<20} | {d_mov['cap']:>9.2f} | {'0.00':>9} | {d_mov['cap']:>9.2f} | {saldo_acumulado:>10.2f}\n"
         elif d_mov['tipo'] == 'PAGO':
             if d_mov['cap'] > 0 or d_mov['int'] > 0:
-                saldo_acumulado -= d_mov['cap']
-                if saldo_acumulado < 0.01: saldo_acumulado = 0.0
+                saldo_acumulado -= d_mov['cap']; saldo_acumulado = 0.0 if saldo_acumulado < 0.01 else saldo_acumulado
                 reporte_texto += f"{f_display:<10} | {'PAGO CUOTA':<20} | {d_mov['cap']:>9.2f} | {d_mov['int']:>9.2f} | {d_mov['cap']+d_mov['int']:>9.2f} | {saldo_acumulado:>10.2f} C\n"
-            
-    reporte_texto += "\n\n⏩ PARTE 2: PROYECCIÓN DE PAGOS PENDIENTES (CRONOGRAMA ACTUALIZADO)\n" + "-"*85 + "\n"
-    reporte_texto += f"{'NRO CUOTA':<10} | {'MES Y AÑO':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
+    reporte_texto += "\n\n⏩ PARTE 2: PROYECCIÓN DE PAGOS PENDIENTES (CRONOGRAMA ACTUALIZADO)\n" + "-"*85 + "\n" + f"{'NRO CUOTA':<10} | {'MES Y AÑO':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     sp, mes, anio, total_proyectado = saldo_hoy, datetime.now().month, datetime.now().year, 0.0
-    
     amort_pct_act, amort_pct_val = get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0) / 100.0
     res_orig = db_query("SELECT monto_original FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (dni, acc_num))
     d_orig = res_orig[0][0] if res_orig else 0.0
     meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     num_c = 1
-    
     while sp > 0.01:
         mes = mes + 1 if mes < 12 else 1
         if mes == 1: anio += 1
-        
-        if amort_pct_act == "SI":
-            m_pct = float(math.ceil(d_orig * amort_pct_val))
-            if m_pct < m_min: m_pct = float(m_min)
-            am = min(m_pct, sp)
+        if amort_pct_act == "SI": m_pct = float(math.ceil(d_orig * amort_pct_val)); m_pct = float(m_min) if m_pct < m_min else m_pct; am = min(m_pct, sp)
         else: am = min(m_min, sp)
-            
         i = float(math.ceil(sp * tasa)); cuo = am + i; sp -= am; total_proyectado += cuo
-        reporte_texto += f"Cuota {num_c:<4} | {meses_nombres[mes-1]} {anio:<13} | {am:>9.2f} | {i:>9.2f} | {cuo:>9.2f} | {max(0.0, sp):>10.2f}\n"
-        num_c += 1
         
+        # Corrección: Agrupamos mes y año primero, y le damos un ancho fijo de 20 espacios
+        mes_anio_str = f"{meses_nombres[mes-1]} {anio}"
+        reporte_texto += f"Cuota {num_c:<4} | {mes_anio_str:<20} | {am:>9.2f} | {i:>9.2f} | {cuo:>9.2f} | {max(0.0, sp):>10.2f}\n"
+        num_c += 1
+
     reporte_texto += "-"*85 + "\n" + f"Saldo actual de capital: S/ {saldo_hoy:.2f}\nTotal estimado para liquidar deuda: S/ {total_proyectado:.2f}\n" + "="*85 + "\n"
     for line in reporte_texto.split('\n'): pdf.cell(0, 5, txt=line.encode('latin-1','ignore').decode('latin-1'), ln=True)
     f_n = f"R_{dni}_{acc_num}.pdf"; pdf.output(f_n)
@@ -351,12 +306,9 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
 def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, fh, tasa, incluir_contrato=True):
     nom_presi, nom_teso, nom_secri, anio_actual = get_config("presidente", "No asignado", str), get_config("tesorero", "No asignado", str), get_config("secretario", "No asignado", str), datetime.now().year
     pdf = FPDF(); fh_fmt = format_fecha(fh)
-    
-    pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "BANQUITO LA COLMENA - VOUCHER DE DESEMBOLSO", ln=True, align='C')
-    pdf.set_font("Courier", size=12); pdf.ln(5)
-    texto_v = f"Fecha: {fh_fmt}\nSocio: {nom_soc}\nDNI:   {d} | Accion Vinculada: {n_a}\n" + "-"*50 + f"\nMONTO DESEMBOLSADO EN EFECTIVO : S/ {m_prestado:.2f}\n" + "-"*50 + "\n\n\n     ____________________________\n          FIRMA DEL SOCIO\n"
+    pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "BANQUITO LA COLMENA - VOUCHER DE DESEMBOLSO", ln=True, align='C'); pdf.set_font("Courier", size=12); pdf.ln(5)
+    texto_v = f"Fecha: {fh_fmt}\nSocio: {nom_soc}\nDNI:   {d} | Accion Vinculada: {n_a}\n" + "-"*50 + f"\nMONTO DESEMBOLSADO EN EFECTIVO : S/ {m_prestado:.2f}\n" + "-"*50 + "\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
     for l in texto_v.split('\n'): pdf.cell(0, 6, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
-        
     pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "CRONOGRAMA DE PRESTAMO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
     tc = f"Socio: {nom_soc}\nDNI: {d} | Accion: {n_a}\nFecha de Emision: {fh_fmt}\nDeuda Total Capital: S/ {m_proy:.2f} | Int. Proyectado: S/ {tot_i:.2f} | Total a Pagar: S/ {m_proy+tot_i:.2f}\n--------------------------------------------------------------------------\n{'NRO CUOTA':<10} | {'MES Y AÑO':<17} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n--------------------------------------------------------------------------\n"
     saldo = m_proy
@@ -364,33 +316,24 @@ def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, f
         n_cuota, mes_anio, cap, interes, cuota = c[0], c[1], c[2], c[3], c[4]
         saldo -= cap; tc += f"{n_cuota:<10} | {mes_anio:<17} | {cap:>9.2f} | {interes:>9.2f} | {cuota:>9.2f} | {max(0.0, saldo):>10.2f}\n"
     for l in tc.split('\n'): pdf.cell(0, 5, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
-        
     if incluir_contrato:
-        pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "CONTRATO PRIVADO DE PRÉSTAMO DE DINERO", ln=True, align='C'); pdf.ln(5)
-        pdf.set_font("Arial", '', 11)
+        pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "CONTRATO PRIVADO DE PRÉSTAMO DE DINERO", ln=True, align='C'); pdf.ln(5); pdf.set_font("Arial", '', 11)
         intro = f"Conste por el presente documento privado de préstamo de dinero que celebran, de una parte, la Junta Directiva del periodo {anio_actual} del BANQUITO LA COLMENA, debidamente representada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, a quienes en adelante se les denominará EL PRESTAMISTA; y de la otra parte, el/la socio(a) {nom_soc}, identificado(a) con DNI Nro. {d}, a quien en adelante se le denominará EL PRESTATARIO; quienes convienen en celebrar el presente contrato bajo los terms y condiciones contenidos en las siguientes cláusulas:"
         pdf.multi_cell(0, 6, txt=intro.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(5)
-        
         pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "PRIMERA: DEL PRÉSTAMO Y LA DEUDA TOTAL", ln=True, align='L'); pdf.set_font("Arial", '', 11)
         clausula_1 = f"EL PRESTAMISTA otorga a EL PRESTATARIO un nuevo desembolso en efectivo por la suma de S/ {m_prestado:.2f}. " + (f"Sumado al saldo deudor anterior, la DEUDA TOTAL ACTUALIZADA asciende a la suma de S/ {m_proy:.2f}, " if m_proy > m_prestado else f"La DEUDA TOTAL ACTUALIZADA asciende a la suma de S/ {m_proy:.2f}, ") + f"vinculada a la Acción Nro. {n_a}."
         pdf.multi_cell(0, 6, txt=clausula_1.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(4)
-        
         pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "SEGUNDA: DE LOS INTERESES", ln=True, align='L'); pdf.set_font("Arial", '', 11)
         pdf.multi_cell(0, 6, txt=f"El capital total prestado devengará un interés compensatorio mensual del {tasa * 100:.1f}%.".encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(4)
-        
         pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "TERCERA: DE LA DEVOLUCIÓN", ln=True, align='L'); pdf.set_font("Arial", '', 11)
         pdf.multi_cell(0, 6, txt="EL PRESTATARIO se obliga y compromete a devolver el capital total prestado más los intereses generados mediante pagos mensuales y continuos los días de asamblea estipulados de cada mes, cumpliendo estrictamente con la amortización mínima obligatoria pactada en asamblea general.".encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(4)
-        
         pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "CUARTA: DEL INCUMPLIMIENTO", ln=True, align='L'); pdf.set_font("Arial", '', 11)
         pdf.multi_cell(0, 6, txt="En caso de demora, morosidad o incumplimiento en el pago de las cuotas, EL PRESTATARIO acepta y autoriza someterse a las multas, sanciones o al descuento directo y automático de sus ahorros (capitalización) depositados en EL BANQUITO, conforme al reglamento interno vigente.".encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(8)
-        
         try: f_dt = datetime.strptime(fh[:10], "%Y-%m-%d"); meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]; fecha_texto = f"{f_dt.day} de {meses[f_dt.month - 1]} de {f_dt.year}"
         except: fecha_texto = format_fecha(fh[:10])
-            
         pdf.multi_cell(0, 6, txt=f"Suscrito y firmado en señal de estricta conformidad, el día {fecha_texto}.".encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(20)
-        firmas = "_____________________________                  _____________________________\nEL PRESTATARIO                               POR EL PRESTAMISTA\n" + f"DNI: {d:<15}                        (Junta Directiva {anio_actual})"
+        firmas = "_____________________________                  _____________________________\nEL PRESTATARIO                                               POR EL PRESTAMISTA\n" + f"DNI: {d:<15}                        (Junta Directiva {anio_actual})"
         pdf.multi_cell(0, 5, txt=firmas.encode('latin-1','ignore').decode('latin-1'), align='C')
-        
     f_n = f"D_{d}.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as f: b = f.read()
     os.remove(f_n); return b
@@ -406,10 +349,8 @@ def generar_pdf_constancia(tipo, socio_nom, dni):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 15, "BANQUITO LA COLMENA", ln=True, align='C')
     pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, f"CONSTANCIA DE {tipo.upper()}", ln=True, align='C'); pdf.ln(10)
     pdf.set_font("Arial", '', 12); fecha_hoy = datetime.now().strftime("%d de %B de %Y")
-    
     if tipo == "Socio Activo": texto = f"La Junta Directiva del Banquito La Colmena hace constar que el Sr(a). {socio_nom.upper()}, identificado con DNI {dni}, se encuentra registrado como SOCIO ACTIVO de nuestra institucion, cumpliendo con sus aportaciones a la fecha.\n\nSe expide el presente documento a solicitud del interesado para los fines que considere convenientes."
     else: texto = f"La Junta Directiva del Banquito La Colmena certifica que el Sr(a). {socio_nom.upper()}, con DNI {dni}, NO MANTIENE DEUDAS PENDIENTES por concepto de prestamos en ninguna de sus acciones a la fecha de hoy.\n\nSe extiende la presente constancia para acreditar su solvencia interna dentro de la organizacion."
-        
     pdf.multi_cell(0, 8, txt=texto.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(30)
     pdf.cell(0, 10, "__________________________", ln=True, align='C'); pdf.cell(0, 5, "Secretaria / Junta Directiva", ln=True, align='C'); pdf.cell(0, 5, f"Fecha: {fecha_hoy}", ln=True, align='C')
     f = f"C_{dni}.pdf"; pdf.output(f)
@@ -422,37 +363,43 @@ def generar_pdf_acta_cierre(anio):
     movs_soc = db_query("SELECT tipo, monto FROM movimientos WHERE tipo LIKE ? AND monto < 0", (f"Pago Utilidades {anio}%",))
     movs_cc = db_query("SELECT monto FROM movimientos WHERE tipo = ?", (f"Ingreso Caja Chica - Sobrante Utilidades {anio}",))
     sobrante_cc = sum([float(m[0]) for m in movs_cc]) if movs_cc else 0.0
-    
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, f"ACTA DE CIERRE Y REPARTO DE UTILIDADES - AÑO {anio}", ln=True, align='C'); pdf.ln(5)
     pdf.set_font("Arial", '', 11)
     intro = f"En la presente asamblea general de cierre del año {anio}, la Junta Directiva del BANQUITO LA COLMENA, conformada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, deja constancia de la distribution de las utilidades generadas por los intereses de los préstamos durante el periodo correspondiente."
     pdf.multi_cell(0, 6, txt=intro.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(5)
-    
     pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "1. PAGO A LA JUNTA DIRECTIVA (3%)", ln=True); pdf.set_font("Arial", '', 11); tot_dir = 0.0
     if movs_dir:
         for t, m in movs_dir:
             tot_dir += abs(m); detalle = format_movimiento(t).split(" - ")[1] if " - " in format_movimiento(t) else format_movimiento(t)
             pdf.cell(0, 6, f" - {detalle}: S/ {abs(m):.2f}".encode('latin-1','ignore').decode('latin-1'), ln=True)
     else: pdf.cell(0, 6, " - No se registraron pagos a la directiva.", ln=True)
-    pdf.ln(3)
-    
-    pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "2. REPARTO A SOCIOS (97% + Excedentes)", ln=True); pdf.set_font("Arial", '', 11); tot_soc = 0.0
+    pdf.ln(3); pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "2. REPARTO A SOCIOS (97% + Excedentes)", ln=True); pdf.set_font("Arial", '', 11); tot_soc = 0.0
     if movs_soc:
         for t, m in movs_soc:
             tot_soc += abs(m); detalle = format_movimiento(t).split(" - ")[1] if " - " in format_movimiento(t) else format_movimiento(t)
             pdf.cell(0, 6, f" - Socio: {detalle}: S/ {abs(m):.2f}".encode('latin-1','ignore').decode('latin-1'), ln=True)
     else: pdf.cell(0, 6, " - No se registraron pagos a socios.", ln=True)
-    pdf.ln(3)
-    
-    pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "3. SOBRANTE A CAJA CHICA", ln=True); pdf.set_font("Arial", '', 11)
+    pdf.ln(3); pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "3. SOBRANTE A CAJA CHICA", ln=True); pdf.set_font("Arial", '', 11)
     pdf.cell(0, 6, f" - Excedente depositado a Caja Chica: S/ {sobrante_cc:.2f}", ln=True); pdf.ln(8)
-    
     pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "RESUMEN TOTAL REPARTIDO:", ln=True); pdf.set_font("Arial", '', 11)
     pdf.cell(0, 6, f"Total Directiva : S/ {tot_dir:.2f}", ln=True); pdf.cell(0, 6, f"Total Socios    : S/ {tot_soc:.2f}", ln=True); pdf.cell(0, 6, f"Total Caja Chica: S/ {sobrante_cc:.2f}", ln=True); pdf.cell(0, 6, f"GRAN TOTAL      : S/ {tot_dir + tot_soc + sobrante_cc:.2f}", ln=True); pdf.ln(20)
-    
-    firmas = "_____________________________                  _____________________________\nPRESIDENTE(A)                                 TESORERO(A)\n"
+    firmas = "_____________________________                  _____________________________\nPRESIDENTE(A)                                                  TESORERO(A)\n"
     pdf.multi_cell(0, 5, txt=firmas.encode('latin-1','ignore').decode('latin-1'), align='C')
     f_n = f"Acta_Cierre_{anio}.pdf"; pdf.output(f_n)
+    with open(f_n, "rb") as f: b = f.read()
+    os.remove(f_n); return b
+
+def generar_pdf_acta_liquidacion(nombre, dni, aportes, deudas, multas, neto):
+    pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
+    pdf.cell(0, 10, "BANQUITO LA COLMENA - ACTA DE LIQUIDACION Y RETIRO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
+    texto = f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\nSocio: {nombre}\nDNI:   {dni}\n" + "-"*60 + "\n"
+    texto += f"1. Total Capital Aportado :  S/ {aportes:.2f}\n2. Deudas por Prestamos   : -S/ {deudas:.2f}\n3. Multas Pendientes      : -S/ {multas:.2f}\n" + "-"*60 + "\n"
+    if neto >= 0: texto += f"SALDO NETO A DEVOLVER AL SOCIO : S/ {neto:.2f}\n" + "-"*60 + "\n\n"
+    else: texto += f"DEUDA PENDIENTE DEL SOCIO A CAJA: S/ {abs(neto):.2f}\n" + "-"*60 + "\n\n"
+    texto += "Mediante este documento se hace constar el retiro voluntario y definitivo\ndel socio de la institucion, anulando sus acciones vigentes.\n\n\n\n"
+    texto += "      ____________________________             ____________________________\n            FIRMA DEL SOCIO                       JUNTA DIRECTIVA\n"
+    for line in texto.split('\n'): pdf.cell(0, 6, txt=line.encode('latin-1','ignore').decode('latin-1'), ln=True)
+    f_n = f"Liquidacion_{dni}.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as f: b = f.read()
     os.remove(f_n); return b
 
@@ -465,7 +412,7 @@ def limpiar_formularios_socio():
         if clave in st.session_state: del st.session_state[clave]
 
 def limpiar_formularios_pago():
-    claves = ['pu_tot', 'pu_det_ap', 'pu_tot_ap', 'pu_det_pr', 'pu_tot_cap', 'pu_tot_int', 'pu_show_voucher', 'pu_done', 'pu_pdf_bytes', 'pu_msg_correo', 'pu_needs_auth', 'pu_auth_success', 'pres_done', 'pres_pdf', 'pres_dni', 'pres_msg_correo']
+    claves = ['pu_tot', 'pu_det_ap', 'pu_tot_ap', 'pu_det_pr', 'pu_tot_cap', 'pu_tot_int', 'pu_det_mul', 'pu_tot_mul', 'pu_ids_mul', 'pu_show_voucher', 'pu_done', 'pu_pdf_bytes', 'pu_msg_correo', 'pu_needs_auth', 'pu_auth_success', 'pres_done', 'pres_pdf', 'pres_dni', 'pres_msg_correo']
     for clave in claves:
         if clave in st.session_state: del st.session_state[clave]
 
@@ -473,19 +420,21 @@ def update_monto_inline(sol_id, input_key):
     db_query("UPDATE solicitudes_prestamo SET monto=? WHERE id=?", (st.session_state[input_key], sol_id), fetch=False)
 
 def render_top_header():
-    col_head1, col_head2 = st.columns([5, 1])
-    nombre = st.session_state.usuario_nombre if st.session_state.usuario_id else st.session_state.socio_nombre
-    rol = st.session_state.usuario_rol.upper() if st.session_state.usuario_id else "SOCIO"
-    col_head1.markdown(f"<h2 style='margin-bottom: 0px;'>🐝 BIENVENIDO(A), {nombre}</h2>", unsafe_allow_html=True)
-    col_head1.markdown(f"**PERFIL:** {rol}")
-    if col_head2.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
-        st.session_state.usuario_id = st.session_state.usuario_rol = st.session_state.usuario_nombre = None
-        st.session_state.socio_logged_in = st.session_state.socio_dni = st.session_state.socio_nombre = False
-        st.session_state.vista = 'login'
-        st.rerun()
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    with st.container():
+        col_head1, col_head2 = st.columns([4, 1])
+        nombre = st.session_state.usuario_nombre if st.session_state.usuario_id else st.session_state.socio_nombre
+        rol = st.session_state.usuario_rol.upper() if st.session_state.usuario_id else "SOCIO"
+        with col_head1:
+            st.markdown(f"<h2 style='color: #1e3a8a; margin-bottom: 0px; padding-bottom: 0px;'>🐝 BIENVENIDO(A), {nombre}</h2>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color: #64748b; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; margin-top: 0px;'>PERFIL: {rol}</p>", unsafe_allow_html=True)
+        with col_head2:
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+            if st.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
+                st.session_state.update({'usuario_id': None, 'usuario_rol': None, 'usuario_nombre': None, 'socio_logged_in': False, 'socio_dni': None, 'socio_nombre': None, 'vista': 'login'})
+                st.rerun()
     st.divider()
 
-# --- MÓDULOS DE UI COMPARTIDOS ---
 def ui_panel_control():
     st.subheader("📊 DASHBOARD ANALÍTICO GLOBAL")
     s_tot = float(db_query("SELECT SUM(monto) FROM movimientos")[0][0] or 0.0)
@@ -493,7 +442,6 @@ def ui_panel_control():
     e_cc = abs(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Egreso Caja Chica%' OR tipo = 'Retiro Caja'")[0][0] or 0.0)
     f_cc = i_cc - e_cc
     c_prin = s_tot - f_cc
-    
     prestado_bd = db_query("SELECT SUM(saldo_actual) FROM prestamos WHERE estado='ACTIVO'")
     dinero_prestado = float(prestado_bd[0][0]) if prestado_bd and prestado_bd[0][0] else 0.0
     patrimonio_total = c_prin + f_cc + dinero_prestado
@@ -504,8 +452,7 @@ def ui_panel_control():
     c3.metric("CAJA CHICA", f"S/ {f_m(f_cc)}")
     c4.metric("PATRIMONIO TOTAL", f"S/ {f_m(patrimonio_total)}")
     
-    st.divider()
-    col_chart1, col_chart2 = st.columns(2)
+    st.divider(); col_chart1, col_chart2 = st.columns(2)
     with col_chart1:
         st.write("#### 🥧 DISTRIBUCIÓN DEL PORTAFOLIO")
         if patrimonio_total > 0:
@@ -513,16 +460,25 @@ def ui_panel_control():
             base = alt.Chart(source).encode(theta=alt.Theta("Monto:Q", stack=True), color=alt.Color("Categoría:N", scale=alt.Scale(scheme='set2'), legend=alt.Legend(title="Fondo")), tooltip=["Categoría", "Monto"])
             st.altair_chart(base.mark_arc(innerRadius=50, outerRadius=120), use_container_width=True)
         else: st.info("No hay fondos registrados en el sistema.")
-            
     with col_chart2:
         st.write("#### 📈 CRECIMIENTO DE APORTES (HISTÓRICO)")
-        movs_aportes = db_query("SELECT fecha, monto FROM movimientos WHERE tipo LIKE '%Aporte%'")
+        # Traemos también el "tipo" para saber exactamente qué aportes son
+        movs_aportes = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE tipo LIKE '%Aporte%'")
         if movs_aportes:
-            df_ap = pd.DataFrame(movs_aportes, columns=["fecha", "monto"])
+            df_ap = pd.DataFrame(movs_aportes, columns=["fecha", "tipo", "monto"])
             df_ap['fecha'] = pd.to_datetime(df_ap['fecha'])
+            df_ap['monto'] = pd.to_numeric(df_ap['monto']) # Aseguramos que sea número real
             df_ap['Mes'] = df_ap['fecha'].dt.strftime('%Y-%m')
+            
+            # El gráfico normal
             st.bar_chart(df_ap.groupby('Mes')['monto'].sum().reset_index().set_index('Mes'), color="#2563eb")
-        else: st.info("No hay aportes registrados en el sistema.")
+            
+            # EL AUDITOR (NUEVO)
+            with st.expander("🧐 AUDITAR DATOS DEL GRÁFICO (Ver tabla exacta)"):
+                st.write("Esto es todo lo que el sistema encontró con la palabra 'Aporte' y que está sumando en el gráfico:")
+                st.dataframe(df_ap, use_container_width=True)
+        else: 
+            st.info("No hay aportes registrados en el sistema.")
 
 def ui_votaciones_admin():
     st.subheader("🗳️ GESTIÓN DE VOTACIONES (URNA VIRTUAL)")
@@ -536,7 +492,6 @@ def ui_votaciones_admin():
                 db_query("INSERT INTO votaciones (pregunta, opciones, fecha_creacion) VALUES (?,?,?)", (v_preg, v_ops, datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
                 st.success("Votación creada y publicada con éxito. Los socios ya pueden votar.")
             else: st.warning("Completa la pregunta y las opciones.")
-                
     with t_v2:
         st.write("Cierra las urnas y revisa los resultados finales.")
         vot_abiertas = db_query("SELECT id, pregunta, fecha_creacion FROM votaciones WHERE estado='ABIERTA' ORDER BY id DESC")
@@ -548,8 +503,7 @@ def ui_votaciones_admin():
                     if resultados: st.bar_chart(pd.DataFrame(resultados, columns=["Opción", "Votos (1 x Socio)"]).set_index("Opción"), color="#2563eb")
                     else: st.info("Aún no hay votos registrados.")
                     if st.button("🔒 CERRAR URNA PARA ESTA CONSULTA", key=f"cierra_{v_id}"):
-                        db_query("UPDATE votaciones SET estado='CERRADA' WHERE id=?", (v_id,), fetch=False)
-                        st.rerun()
+                        db_query("UPDATE votaciones SET estado='CERRADA' WHERE id=?", (v_id,), fetch=False); st.rerun()
         else: st.info("No hay votaciones activas en este momento.")
 
 def ui_cumpleanos_admin(es_tesorero=False):
@@ -558,10 +512,7 @@ def ui_cumpleanos_admin(es_tesorero=False):
             lista_c = obtener_estado_cumpleanos()
             if lista_c:
                 df_c = pd.DataFrame(lista_c)
-                def highlight_estado(val):
-                    if val == 'ENTREGADO': return 'color: green; font-weight: bold'
-                    elif val == 'EN RECAUDACIÓN': return 'color: orange; font-weight: bold'
-                    return 'color: gray'
+                def highlight_estado(val): return 'color: green; font-weight: bold' if val == 'ENTREGADO' else ('color: orange; font-weight: bold' if val == 'EN RECAUDACIÓN' else 'color: gray')
                 st.dataframe(df_c.style.map(highlight_estado, subset=['Estado']), use_container_width=True)
             else: st.info("No hay fechas registradas.")
         return
@@ -571,15 +522,11 @@ def ui_cumpleanos_admin(es_tesorero=False):
         lista_c = obtener_estado_cumpleanos()
         if lista_c:
             df_c = pd.DataFrame(lista_c)
-            def highlight_estado(val):
-                if val == 'ENTREGADO': return 'color: green; font-weight: bold'
-                elif val == 'EN RECAUDACIÓN': return 'color: orange; font-weight: bold'
-                return 'color: gray'
+            def highlight_estado(val): return 'color: green; font-weight: bold' if val == 'ENTREGADO' else ('color: orange; font-weight: bold' if val == 'EN RECAUDACIÓN' else 'color: gray')
             st.dataframe(df_c.style.map(highlight_estado, subset=['Estado']), use_container_width=True)
         else: st.info("No hay fechas registradas.")
             
-    st.divider()
-    anio_act, mes_act = datetime.now().year, datetime.now().month
+    st.divider(); anio_act, mes_act = datetime.now().year, datetime.now().month
     meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     
     cumpleaneros = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
@@ -587,23 +534,19 @@ def ui_cumpleanos_admin(es_tesorero=False):
     for d, n, a, fnac in cumpleaneros:
         if fnac:
             try:
-                dt_nac = datetime.strptime(fnac, "%Y-%m-%d")
-                if dt_nac.month == mes_act: cumplen_este_mes.append({"dni": d, "nom": f"{n.split()[0]} {a.split()[0]}", "dia": dt_nac.day})
+                if datetime.strptime(fnac, "%Y-%m-%d").month == mes_act: cumplen_este_mes.append({"dni": d, "nom": f"{n.split()[0]} {a.split()[0]}", "dia": datetime.strptime(fnac, "%Y-%m-%d").day})
             except: pass
     
     cuota_c = get_config("cuota_cumpleanos", 0.0)
     if cumplen_este_mes:
         st.success(f"Este mes de **{meses_nom[mes_act-1]}** estamos festejando a:")
         for c in cumplen_este_mes: st.write(f"- 🎈 **{c['nom']}** (Día {c['dia']})")
-        st.divider()
-        t1, t2 = st.tabs(["💰 COBRAR CUOTAS A SOCIOS", "🎁 ENTREGAR POZO AL CUMPLEAÑERO"])
-        
+        st.divider(); t1, t2 = st.tabs(["💰 COBRAR CUOTAS A SOCIOS", "🎁 ENTREGAR POZO AL CUMPLEAÑERO"])
         with t1:
             st.write(f"**Cuota acordada por socio:** S/ {f_m(cuota_c)}")
             soc_pagadores = db_query("SELECT dni, nombres, apellidos FROM socios WHERE acciones > 0 ORDER BY nombres ASC")
             dni_festejado = st.selectbox("¿Para el cumpleaños de quién están aportando?", [c['nom'] for c in cumplen_este_mes])
             dni_f_real = next(c['dni'] for c in cumplen_este_mes if c['nom'] == dni_festejado)
-            
             st.write("Marque a los socios que están pagando su cuota en este momento:")
             socios_a_pagar = []
             for s_p in soc_pagadores:
@@ -613,18 +556,14 @@ def ui_cumpleanos_admin(es_tesorero=False):
                 if ya_pago: st.write(f"✅ {nombre_pagador} (Ya pagó)")
                 else:
                     if st.checkbox(f"Cobrar a: {nombre_pagador}"): socios_a_pagar.append(s_p[0])
-            
             if st.button("💾 REGISTRAR PAGO DE CUOTAS", type="primary"):
                 if socios_a_pagar:
-                    monto_ingreso_total = len(socios_a_pagar) * cuota_c
-                    fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    monto_ingreso_total = len(socios_a_pagar) * cuota_c; fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (monto_ingreso_total,), fetch=False)
                     for sp_dni in socios_a_pagar: db_query("INSERT INTO cumpleanos_pagos (anio, mes, dni_cumpleanero, dni_aportante, monto, fecha_pago) VALUES (?,?,?,?,?,?)", (anio_act, mes_act, dni_f_real, sp_dni, cuota_c, fh), fetch=False)
                     db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Recaudación Cumpleaños - Para {dni_festejado}", monto_ingreso_total, fh), fetch=False)
-                    st.success(f"Se registraron {len(socios_a_pagar)} pagos exitosamente. El dinero ingresó a la Caja Principal.")
-                    st.rerun()
+                    st.success(f"Se registraron {len(socios_a_pagar)} pagos exitosamente. El dinero ingresó a la Caja Principal."); st.rerun()
                 else: st.warning("No seleccionaste a ningún socio para cobrarle.")
-                    
         with t2:
             st.write("Entregar el dinero recaudado al cumpleañero.")
             dni_festejado_pago = st.selectbox("Seleccione al cumpleañero a pagar:", [c['nom'] for c in cumplen_este_mes], key="sel_pagar")
@@ -632,15 +571,12 @@ def ui_cumpleanos_admin(es_tesorero=False):
             recaudado = db_query("SELECT SUM(monto) FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=?", (anio_act, mes_act, dni_f_real_pago))[0][0] or 0.0
             st.metric(f"Total Recaudado para {dni_festejado_pago}", f"S/ {f_m(recaudado)}")
             ya_se_le_entrego = db_query("SELECT id FROM movimientos WHERE tipo = ? AND monto < 0", (f"Entrega de Pozo Cumpleaños - {dni_festejado_pago} ({anio_act})",))
-            
             if ya_se_le_entrego: st.success("✅ El pozo ya fue entregado a este cumpleañero.")
             elif recaudado > 0:
                 if st.button(f"🎁 ENTREGAR POZO (S/ {f_m(recaudado)}) A {dni_festejado_pago}", type="primary"):
                     fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (recaudado,), fetch=False)
-                    db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Entrega de Pozo Cumpleaños - {dni_festejado_pago} ({anio_act})", -recaudado, fh), fetch=False)
-                    st.success("¡Dinero entregado y descontado de la Caja Principal!")
-                    st.rerun()
+                    db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (recaudado,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Entrega de Pozo Cumpleaños - {dni_festejado_pago} ({anio_act})", -recaudado, fh), fetch=False)
+                    st.success("¡Dinero entregado y descontado de la Caja Principal!"); st.rerun()
             else: st.info("Aún no se ha recaudado dinero para este cumpleañero.")
     else: st.info(f"Este mes de **{meses_nom[mes_act-1]}** no hay cumpleaños programados en el padrón de socios activos.")
 
@@ -649,32 +585,17 @@ def ui_registro_nuevo_socio():
         st.success("🎉 ¡Socio nuevo registrado y pago ingresado en la Caja exitosamente!")
         st.info(st.session_state.ns_msg_correo)
         st.download_button("🖨️ DESCARGAR VOUCHER (IMPRIMIR Y FIRMAR)", data=st.session_state.ns_pdf_bytes, file_name=f"Voucher_Ingreso.pdf", mime="application/pdf", type="primary")
-        if st.button("FINALIZAR Y LIMPIAR FORMULARIO"):
-            limpiar_formularios_socio(); st.rerun()
+        if st.button("FINALIZAR Y LIMPIAR FORMULARIO"): limpiar_formularios_socio(); st.rerun()
     else:
-        rdni = st.text_input("DNI*", on_change=limpiar_formularios_socio)
-        rnom = st.text_input("Nombres*")
-        rape = st.text_input("Apellidos")
-        rtel = st.text_input("Teléfono")
-        rdir = st.text_input("Dirección")
-        rcor = st.text_input("Correo")
-        rsex = st.selectbox("Sexo", ["Masculino", "Femenino"])
-        rnac = st.date_input("Fecha de Nacimiento", value=date(1990, 1, 1), min_value=date(1900, 1, 1), max_value=date.today())
-        racc = st.number_input("Acciones a Iniciar", 1, 4, 1)
-        
-        st.divider()
-        st.write("El sistema calcula automáticamente la nivelación correspondiente al día de hoy:")
+        rdni = st.text_input("DNI*", on_change=limpiar_formularios_socio); rnom = st.text_input("Nombres*"); rape = st.text_input("Apellidos"); rtel = st.text_input("Teléfono"); rdir = st.text_input("Dirección"); rcor = st.text_input("Correo"); rsex = st.selectbox("Sexo", ["Masculino", "Femenino"]); rnac = st.date_input("Fecha de Nacimiento", value=date(1990, 1, 1), min_value=date(1900, 1, 1), max_value=date.today()); racc = st.number_input("Acciones a Iniciar", 1, 4, 1)
+        st.divider(); st.write("El sistema calcula automáticamente la nivelación correspondiente al día de hoy:")
         c_hist, i_hist = calcular_nivelacion_por_accion()
         ins_b = get_config("cuota_inscripcion", 0.0)
-        t_cap = c_hist * racc
-        t_int = math.ceil(i_hist) * racc
-        t_ins = ins_b * racc
+        t_cap, t_int, t_ins = c_hist * racc, math.ceil(i_hist) * racc, ins_b * racc
         t_tot = t_cap + t_int + t_ins
-        
         st.markdown("### 📄 Desglose del Pago de Ingreso")
         st.write(f"- **Aportes (Capital de Nivelación):** S/ {f_m(t_cap)}\n- **Inscripción ({racc} acc):** S/ {f_m(t_ins)}\n- **Interés de Nivelación:** S/ {f_m(t_int)}")
         st.info(f"**TOTAL A PAGAR E INGRESAR A CAJA:** S/ {f_m(t_tot)}")
-        
         if st.button("💸 REGISTRAR SOCIO Y PAGAR", type="primary"):
             if not rdni or not rnom: st.warning("DNI y Nombres son obligatorios.")
             else:
@@ -684,36 +605,26 @@ def ui_registro_nuevo_socio():
                     db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (t_tot,), fetch=False)
                     fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     nombre_fmt = f"{rnom.split()[0]} {rape.split()[0]}"
-                    
                     if t_cap>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Aporte Inicial - {nombre_fmt} ({racc} acc)", t_cap, fh), fetch=False)
                     if t_int>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Interés Inicial - {nombre_fmt} ({racc} acc)", t_int, fh), fetch=False)
                     if t_ins>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Derecho Inscripción - {nombre_fmt} ({racc} acc)", t_ins, fh), fetch=False)
-                    
                     txt_ns = f"======================================\n      BANQUITO LA COLMENA\n     INGRESO DE NUEVO SOCIO\n======================================\nFecha: {format_fecha(fh)}\nSocio: {rnom} {rape}\nDNI:   {rdni}\n--------------------------------------\n"
-                    txt_ns += f"Acciones Iniciales : {racc}\nAportes Nivelacion : S/ {f_m(t_cap)}\nInteres Nivelacion : S/ {f_m(t_int)}\nInscripcion        : S/ {f_m(t_ins)}\n--------------------------------------\nTOTAL INGRESADO    : S/ {f_m(t_tot)}\n======================================\n\n\n     ____________________________\n          FIRMA DEL SOCIO\n"
-                    pdf_bytes = generar_pdf_voucher(txt_ns, rdni)
-                    st.session_state.ns_pdf_bytes = pdf_bytes
-                    
+                    txt_ns += f"Acciones Iniciales : {racc}\nAportes Nivelacion : S/ {f_m(t_cap)}\nInteres Nivelacion : S/ {f_m(t_int)}\nInscripcion        : S/ {f_m(t_ins)}\n--------------------------------------\nTOTAL INGRESADO    : S/ {f_m(t_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
+                    pdf_bytes = generar_pdf_voucher(txt_ns, rdni); st.session_state.ns_pdf_bytes = pdf_bytes
                     cuerpo = f"Estimado/a {rnom} {rape},\n\n¡Bienvenido/a al Banquito La Colmena!\nAdjuntamos su comprobante de ingreso.\n\nAtentamente,\nLa Junta Directiva."
                     exito, st.session_state.ns_msg_correo = enviar_correo_generico(rcor, "Bienvenido al Banquito - Voucher de Ingreso", cuerpo, pdf_bytes, f"Voucher_Ingreso_{rdni}.pdf")
-                    st.session_state.ns_done = True
-                    st.rerun()
+                    st.session_state.ns_done = True; st.rerun()
 
 # =============================================================================
 # 5. GESTIÓN DE SESIONES Y BÓVEDA DE TIEMPO
 # =============================================================================
-if 'usuario_id' not in st.session_state:
-    st.session_state.update({'usuario_id': None, 'usuario_rol': None, 'usuario_nombre': None, 'vista': 'login', 'tesorero_bloqueado': False, 'tesorero_id_temp': None, 'last_menu_t': None})
-if 'socio_logged_in' not in st.session_state:
-    st.session_state.update({'socio_logged_in': False, 'socio_dni': None, 'socio_nombre': None})
+if 'usuario_id' not in st.session_state: st.session_state.update({'usuario_id': None, 'usuario_rol': None, 'usuario_nombre': None, 'vista': 'login', 'tesorero_bloqueado': False, 'tesorero_id_temp': None, 'last_menu_t': None})
+if 'socio_logged_in' not in st.session_state: st.session_state.update({'socio_logged_in': False, 'socio_dni': None, 'socio_nombre': None})
 
 # =============================================================================
 # 6. VISTAS DEL SISTEMA
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# VISTA LOGIN
-# -----------------------------------------------------------------------------
 if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
     if st.session_state.tesorero_bloqueado:
         st.markdown("<br><br>", unsafe_allow_html=True); col_bloq1, col_bloq2, col_bloq3 = st.columns([1,2,1])
@@ -731,8 +642,7 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                         st.session_state.vista, st.session_state.tesorero_bloqueado = st.session_state.tesorero_id_temp[1], False
                         st.success("✅ Acceso autorizado por Presidencia."); st.rerun()
                     else: st.error("❌ Clave incorrecta.")
-                if c_b2.form_submit_button("CANCELAR", use_container_width=True):
-                    st.session_state.tesorero_bloqueado = False; st.rerun()
+                if c_b2.form_submit_button("CANCELAR", use_container_width=True): st.session_state.tesorero_bloqueado = False; st.rerun()
     else:
         st.markdown("<br><br>", unsafe_allow_html=True); col_log1, col_log2, col_log3 = st.columns([1, 2, 1])
         with col_log2:
@@ -749,14 +659,12 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                             if u_rol == 'tesorero' and get_config("proxima_reunion", "2000-01-01", str) != datetime.now().strftime("%Y-%m-%d"):
                                 st.session_state.tesorero_bloqueado, st.session_state.tesorero_id_temp = True, (u_id, u_rol, u_nom)
                                 enviar_alerta_correo(u_nom); st.rerun()
-                            else:
-                                st.session_state.update({'usuario_id': u_id, 'usuario_rol': u_rol, 'usuario_nombre': u_nom, 'vista': u_rol}); st.rerun()
+                            else: st.session_state.update({'usuario_id': u_id, 'usuario_rol': u_rol, 'usuario_nombre': u_nom, 'vista': u_rol}); st.rerun()
                         else:
                             res_soc = db_query("SELECT nombres, apellidos, password FROM socios WHERE dni=?", (input_user,))
                             if res_soc:
                                 if not res_soc[0][2]: st.warning("Aún no has creado una contraseña. Ve a la pestaña 'Recuperar Clave'.")
-                                elif res_soc[0][2] == input_pass:
-                                    st.session_state.update({'socio_logged_in': True, 'socio_dni': input_user, 'socio_nombre': f"{res_soc[0][0]} {res_soc[0][1]}", 'vista': 'socio'}); st.rerun()
+                                elif res_soc[0][2] == input_pass: st.session_state.update({'socio_logged_in': True, 'socio_dni': input_user, 'socio_nombre': f"{res_soc[0][0]} {res_soc[0][1]}", 'vista': 'socio'}); st.rerun()
                                 else: st.error("❌ Contraseña incorrecta.")
                             else: st.error("❌ Usuario o DNI no encontrado.")
             with t_rec:
@@ -764,8 +672,7 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                 if st.session_state.pwd_step == 1:
                     st.write("Te enviaremos un código secreto a tu correo registrado.")
                     with st.form("form_req_code"):
-                        r_dni = st.text_input("DNI:")
-                        r_nac = st.date_input("Fecha de Nacimiento:", value=date(1990,1,1), min_value=date(1900,1,1), max_value=date.today())
+                        r_dni, r_nac = st.text_input("DNI:"), st.date_input("Fecha de Nacimiento:", value=date(1990,1,1), min_value=date(1900,1,1), max_value=date.today())
                         if st.form_submit_button("ENVIAR CÓDIGO", type="primary", use_container_width=True):
                             s = db_query("SELECT fecha_nacimiento, password, correo, nombres FROM socios WHERE dni=?", (r_dni,))
                             if s:
@@ -773,12 +680,10 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                                 if str(r_nac) != db_nac: st.error("La fecha de nacimiento no coincide.")
                                 elif not db_cor or db_cor.strip() == "": st.error("No tienes un correo electrónico registrado. Habla con la directiva.")
                                 else:
-                                    codigo = str(random.randint(100000, 999999))
-                                    st.session_state.update({'pwd_code': codigo, 'pwd_dni': r_dni})
+                                    codigo = str(random.randint(100000, 999999)); st.session_state.update({'pwd_code': codigo, 'pwd_dni': r_dni})
                                     cuerpo = f"Hola {db_nom},\n\nTu código es: {codigo}\n\nIngrésalo en la plataforma para continuar."
                                     exito, msg = enviar_correo_generico(db_cor, "Código de Verificación - Banquito La Colmena", cuerpo)
-                                    if exito:
-                                        st.session_state.pwd_step = 2; st.rerun()
+                                    if exito: st.session_state.pwd_step = 2; st.rerun()
                                     else: st.error(msg)
                             else: st.error("Socio no encontrado.")
                 elif st.session_state.pwd_step == 2:
@@ -797,9 +702,6 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                                 db_query("UPDATE socios SET password=? WHERE dni=?", (r_pwd1, st.session_state.pwd_dni), fetch=False)
                                 st.session_state.pwd_step = 1; st.success("✅ Contraseña guardada. Ya puedes iniciar sesión.")
 
-# -----------------------------------------------------------------------------
-# VISTA: SOCIO
-# -----------------------------------------------------------------------------
 elif st.session_state.socio_logged_in:
     render_top_header()
     s_dni = st.session_state.socio_dni
@@ -808,7 +710,6 @@ elif st.session_state.socio_logged_in:
     acc_socio = soc_data[0][2]
     
     st.write(f"**ACCIONES ACTIVAS:** {acc_socio}")
-    
     f_reu_dt = datetime.strptime(get_config("proxima_reunion", "2000-01-01", str), "%Y-%m-%d").date() if get_config("proxima_reunion", "2000-01-01", str) != "2000-01-01" else date(2000, 1, 1)
     if f_reu_dt > date(2000, 1, 1) and date.today() <= f_reu_dt:
         h_format = get_config("proxima_reunion_hora", "16:00", str)
@@ -827,7 +728,7 @@ elif st.session_state.socio_logged_in:
             nombres_cumple = ", ".join([f"{c['nom']} (Día {c['dia']})" for c in cumplen_este_mes_alerta])
             a_pagar_cumple = sum([cuota_c for c in cumplen_este_mes_alerta if c["dni"] != s_dni])
             st.success(f"🎉 **¡ESTAMOS DE FIESTA!** FESTEJANDO A: **{nombres_cumple}**. \n\n💡 **TU CUOTA DE CUMPLEAÑOS A PAGAR ES:** S/ {f_m(a_pagar_cumple)}." if a_pagar_cumple > 0 else f"🎉 **¡ESTAMOS DE FIESTA!** FESTEJANDO A: **{nombres_cumple}**. (¡ES TU CELEBRACIÓN, TÚ NO APORTAS!)")
-        ui_cumpleanos_admin(es_tesorero=False) # Solo pinta la tablita de fechas
+        ui_cumpleanos_admin(es_tesorero=False)
                 
     coms = db_query("SELECT mensaje, fecha FROM comunicados WHERE mensaje NOT LIKE '%anulación%' AND mensaje NOT LIKE '%anuló%' ORDER BY id DESC")
     if coms:
@@ -894,19 +795,16 @@ elif st.session_state.socio_logged_in:
         if disp_sim != float('inf'): st.write(f"**Límite Máximo Activo:** S/ {f_m(tope_monto_sim)} (Puedes solicitar hasta S/ {f_m(disp_sim)} más en esta acción)")
         
         monto_req_sim = st.number_input("Monto a solicitar (S/):", min_value=0.0, max_value=float(disp_sim) if disp_sim != float('inf') else None, step=100.0)
-        
         if st.button("🔮 CALCULAR SIMULACIÓN", type="primary"):
             if monto_req_sim <= 0: st.warning("Ingresa un monto mayor a 0 para simular.")
             else:
                 nuevo_saldo_sim = sp_sim = saldo_act_sim + monto_req_sim
                 tot_i_sim, primera_cuota_cap, primera_cuota_int, es_primera = 0.0, 0.0, 0.0, True
-                
                 while sp_sim > 0.01:
                     am_sim = min(float(math.ceil((saldo_act_sim + monto_req_sim) * amort_pct_val_sim)) if float(math.ceil((saldo_act_sim + monto_req_sim) * amort_pct_val_sim)) >= m_min_sim else float(m_min_sim), sp_sim) if amort_pct_act_sim == "SI" else min(m_min_sim, sp_sim)
                     int_mes_sim = float(math.ceil(sp_sim * tasa_sim))
                     if es_primera: primera_cuota_cap, primera_cuota_int, es_primera = am_sim, int_mes_sim, False
                     tot_i_sim += int_mes_sim; sp_sim -= am_sim
-                
                 st.divider(); st.markdown("### 📊 RESULTADOS DE LA SIMULACIÓN"); col_r1, col_r2, col_r3 = st.columns(3)
                 col_r1.metric("Nueva Deuda Total (Capital)", f"S/ {f_m(nuevo_saldo_sim)}", f"+ S/ {f_m(monto_req_sim)} solicitados")
                 col_r2.metric("Intereses Proyectados Totales", f"S/ {f_m(tot_i_sim)}")
@@ -920,13 +818,10 @@ elif st.session_state.socio_logged_in:
             c_hist, i_hist = calcular_nivelacion_por_accion()
             t_cap, t_int, t_ins = c_hist * cant_acc_soc, math.ceil(i_hist) * cant_acc_soc, get_config("cuota_inscripcion", 0.0) * cant_acc_soc
             tot_hoy = t_cap + t_int + t_ins
-            
             nuevo_c_hist = c_hist + get_config("aporte_mensual", 0.0)
             t_cap_prox, t_int_prox = nuevo_c_hist * cant_acc_soc, math.ceil(i_hist + (nuevo_c_hist * (get_config("interes_prestamo", 0.0) / 100.0))) * cant_acc_soc
-            
             m_actual_idx = datetime.now().month - 1
             meses_n = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-            
             col_h, col_p = st.columns(2)
             with col_h:
                 st.success(f"### Inversión {meses_n[m_actual_idx]}:\n### S/ {f_m(tot_hoy)}")
@@ -964,9 +859,6 @@ elif st.session_state.socio_logged_in:
                     st.write("---")
             else: st.write("No hay historial de votaciones cerradas.")
 
-# -----------------------------------------------------------------------------
-# VISTA: SUPERADMIN
-# -----------------------------------------------------------------------------
 elif st.session_state.vista == 'superadmin':
     render_top_header()
     menu_t = st.radio("MÓDULOS DEL ADMINISTRADOR:", ["📝 REGISTRAR SOCIOS", "⚙️ ASIGNAR JUNTA DIRECTIVA", "🔑 ACCESOS DE SOCIOS"], horizontal=True)
@@ -976,75 +868,50 @@ elif st.session_state.vista == 'superadmin':
         ffun_str = get_config("fecha_fundacion", datetime.now().strftime("%Y-%m-%d"), str)
         try: ffun_date = datetime.strptime(ffun_str, "%Y-%m-%d").date()
         except: ffun_date = date.today()
-            
         ffun = st.date_input("Fecha de Fundación", value=ffun_date)
-        # Cargamos la lista de socios
         lista_socios_db = db_query("SELECT nombres, apellidos, correo FROM socios ORDER BY nombres ASC")
         opciones_socios = ["No asignado"] + [f"{r[0]} {r[1]}".strip() for r in lista_socios_db]
 
         st.divider(); st.write("#### PRESIDENCIA")
         cpres = st.selectbox("Presidente(a)", opciones_socios, index=opciones_socios.index(get_config("presidente", "No asignado", str)) if get_config("presidente", "No asignado", str) in opciones_socios else 0)
-        
-        # --- LÓGICA DE DETECCIÓN MEJORADA ---
         correo_detectado = ""
         if cpres != "No asignado":
-            # Buscamos en la lista que ya cargamos para evitar errores de consulta SQL
             for r in lista_socios_db:
-                nombre_completo_iter = f"{r[0]} {r[1]}".strip()
-                if nombre_completo_iter == cpres:
+                if f"{r[0]} {r[1]}".strip() == cpres:
                     correo_detectado = r[2] if r[2] else ""
                     break
-        
         if cpres != "No asignado":
-            if correo_detectado:
-                st.success(f"📧 Correo vinculado para Alertas: **{correo_detectado}**")
-            else:
-                st.error("⚠️ El socio seleccionado no tiene correo registrado en el padrón.")
+            if correo_detectado: st.success(f"📧 Correo vinculado para Alertas: **{correo_detectado}**")
+            else: st.error("⚠️ El socio seleccionado no tiene correo registrado en el padrón.")
 
         cpass = st.text_input("Clave Secreta de Autorización (Romper Cerrojos)", get_config("password_presidente", "123456", str), type="password")
         
         st.divider(); st.write("#### TESORERÍA")
         ctes = st.selectbox("Tesorero(a)", opciones_socios, index=opciones_socios.index(get_config("tesorero", "No asignado", str)) if get_config("tesorero", "No asignado", str) in opciones_socios else 0)
         u_t = db_query("SELECT usuario, password FROM usuarios WHERE rol='tesorero'")
-        ut_usr = st.text_input("Usuario de Acceso (Tesorero)", u_t[0][0] if u_t else "tesorero")
-        ut_pwd = st.text_input("Clave de Acceso (Tesorero)", u_t[0][1] if u_t else "teso123", type="password")
+        ut_usr, ut_pwd = st.text_input("Usuario de Acceso (Tesorero)", u_t[0][0] if u_t else "tesorero"), st.text_input("Clave de Acceso (Tesorero)", u_t[0][1] if u_t else "teso123", type="password")
         
         st.divider(); st.write("#### SECRETARÍA")
         csec = st.selectbox("Secretario(a)", opciones_socios, index=opciones_socios.index(get_config("secretario", "No asignado", str)) if get_config("secretario", "No asignado", str) in opciones_socios else 0)
         u_s = db_query("SELECT usuario, password FROM usuarios WHERE rol='secretario'")
-        us_usr = st.text_input("Usuario de Acceso (Secretario)", u_s[0][0] if u_s else "secretaria")
-        us_pwd = st.text_input("Clave de Acceso (Secretario)", u_s[0][1] if u_s else "secre123", type="password")
+        us_usr, us_pwd = st.text_input("Usuario de Acceso (Secretario)", u_s[0][0] if u_s else "secretaria"), st.text_input("Clave de Acceso (Secretario)", u_s[0][1] if u_s else "secre123", type="password")
         
         if st.button("💾 GUARDAR CONFIGURACIÓN", type="primary"):
-            # Guardamos el correo detectado en la tabla configuracion
             db_query("UPDATE configuracion SET valor=? WHERE clave='correo_presidente'", (correo_detectado,), fetch=False)
-            
-            for clave, val in [('fecha_fundacion', str(ffun)), ('presidente', cpres), ('password_presidente', cpass), ('tesorero', ctes), ('secretario', csec)]: 
-                db_query("UPDATE configuracion SET valor=? WHERE clave=?", (val, clave), fetch=False)
-            
-            # Actualizar perfiles de usuario
-            if db_query("SELECT id FROM usuarios WHERE rol='tesorero'"): 
-                db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='tesorero'", (ctes, ut_usr, ut_pwd), fetch=False)
-            else: 
-                db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'tesorero')", (ctes, ut_usr, ut_pwd), fetch=False)
-                
-            if db_query("SELECT id FROM usuarios WHERE rol='secretario'"): 
-                db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='secretario'", (csec, us_usr, us_pwd), fetch=False)
-            else: 
-                db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'secretario')", (csec, us_usr, us_pwd), fetch=False)
-            
-            st.success("Configuración actualizada correctamente.")
-            st.rerun()
+            for clave, val in [('fecha_fundacion', str(ffun)), ('presidente', cpres), ('password_presidente', cpass), ('tesorero', ctes), ('secretario', csec)]: db_query("UPDATE configuracion SET valor=? WHERE clave=?", (val, clave), fetch=False)
+            if db_query("SELECT id FROM usuarios WHERE rol='tesorero'"): db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='tesorero'", (ctes, ut_usr, ut_pwd), fetch=False)
+            else: db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'tesorero')", (ctes, ut_usr, ut_pwd), fetch=False)
+            if db_query("SELECT id FROM usuarios WHERE rol='secretario'"): db_query("UPDATE usuarios SET nombre=?, usuario=?, password=? WHERE rol='secretario'", (csec, us_usr, us_pwd), fetch=False)
+            else: db_query("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES (?, ?, ?, 'secretario')", (csec, us_usr, us_pwd), fetch=False)
+            st.success("Configuración actualizada correctamente."); st.rerun()
             
     elif menu_t == "🔑 ACCESOS DE SOCIOS":
         st.write("Si un socio perdió acceso a su correo o no puede entrar a su portal, puedes ver su contraseña actual o asignarle una nueva aquí.")
         if 'pwd_success_msg' in st.session_state: st.success(st.session_state.pwd_success_msg); del st.session_state.pwd_success_msg
-            
         socios_pwd = db_query("SELECT dni, nombres, apellidos, password FROM socios ORDER BY nombres ASC")
         if socios_pwd:
             dict_sp = {f"{s[0]} - {s[1]} {s[2]}": s[0] for s in socios_pwd}
             dni_sp = dict_sp[st.selectbox("SELECCIONE AL SOCIO:", list(dict_sp.keys()), key="select_pwd_socio")]
-            
             with st.container():
                 fresh_data = db_query("SELECT nombres, apellidos, password FROM socios WHERE dni=?", (dni_sp,))
                 if fresh_data:
@@ -1052,22 +919,16 @@ elif st.session_state.vista == 'superadmin':
                     st.markdown(f"**Socio Seleccionado:** {nom_sp}")
                     st.markdown(f"🟢 **Contraseña actual:** {pwd_sp}" if pwd_sp else "🟠 **Estado:** Este socio aún no ha registrado una contraseña.")
                     st.markdown("---"); st.write("¿Deseas cambiar la contraseña manualmente?")
-                    
                     n_pwd = st.text_input("Escriba la nueva contraseña:", type="password", key="admin_super_pwd_input")
                     if st.button("ACTUALIZAR CONTRASEÑA", type="primary", key="admin_super_pwd_btn"):
                         if len(n_pwd) >= 4:
                             db_query("UPDATE socios SET password=? WHERE dni=?", (n_pwd, dni_sp), fetch=False)
-                            st.session_state.pwd_success_msg = f"Contraseña actualizada correctamente para {nom_sp}."
-                            st.rerun()
+                            st.session_state.pwd_success_msg = f"Contraseña actualizada correctamente para {nom_sp}."; st.rerun()
                         else: st.warning("La contraseña debe tener al menos 4 caracteres.")
         else: st.info("No hay socios registrados en el sistema.")
 
-# -----------------------------------------------------------------------------
-# VISTA: SECRETARÍA
-# -----------------------------------------------------------------------------
 elif st.session_state.vista == 'secretario':
     render_top_header()
-    
     mes_actual, dia_actual = datetime.now().month, datetime.now().day
     cumplen_este_mes_alerta = [f"{n.split()[0]} {a.split()[0]}" for n, a, fnac in db_query("SELECT nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0") if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
     if cumplen_este_mes_alerta: st.info(f"🎂 **ALERTA DE CUMPLEAÑOS:** Próximos a cumplir años: **{', '.join(cumplen_este_mes_alerta)}**. " + ("Los socios ya fueron notificados para realizar el abono." if get_config("jugar_cumpleanos", "SI", str) == "SI" else "Recuerde coordinar el presente institucional."))
@@ -1083,8 +944,7 @@ elif st.session_state.vista == 'secretario':
         except: h_obj = datetime.strptime("16:00", "%H:%M").time()
         
         c1, c2 = st.columns(2)
-        nueva_fecha = c1.date_input("Fecha de la Próxima Reunión Oficial:", value=f_obj)
-        nueva_hora = c2.time_input("Hora de la Reunión:", value=h_obj)
+        nueva_fecha, nueva_hora = c1.date_input("Fecha de la Próxima Reunión Oficial:", value=f_obj), c2.time_input("Hora de la Reunión:", value=h_obj)
         
         if st.button("💾 GUARDAR FECHA Y PUBLICAR AVISO", type="primary"):
             db_query("UPDATE configuracion SET valor=? WHERE clave='proxima_reunion'", (str(nueva_fecha),), fetch=False)
@@ -1103,7 +963,6 @@ elif st.session_state.vista == 'secretario':
                 with st.form("edit_soc"):
                     try: fnac_obj = datetime.strptime(fnac_str, "%Y-%m-%d").date() if fnac_str else date(1990, 1, 1)
                     except: fnac_obj = date(1990, 1, 1)
-                    
                     c1, c2 = st.columns(2)
                     unom, uape = c1.text_input("Nombres", value=nom), c2.text_input("Apellidos", value=ape)
                     utel, udir = c1.text_input("Teléfono", value=tel if tel else ""), c2.text_input("Dirección", value=dir_ if dir_ else "")
@@ -1150,13 +1009,11 @@ elif st.session_state.vista == 'secretario':
                 c1, c2 = st.columns(2)
                 with c1:
                     st.info("📜 Constancia de Membresía")
-                    if st.button("GENERAR CONSTANCIA DE SOCIO ACTIVO", use_container_width=True):
-                        st.download_button("📥 DESCARGAR CONSTANCIA PDF", generar_pdf_constancia("Socio Activo", nom_comp, cdni), f"Constancia_Socio_Activo_{cdni}.pdf", type="primary", use_container_width=True)
+                    if st.button("GENERAR CONSTANCIA DE SOCIO ACTIVO", use_container_width=True): st.download_button("📥 DESCARGAR CONSTANCIA PDF", generar_pdf_constancia("Socio Activo", nom_comp, cdni), f"Constancia_Socio_Activo_{cdni}.pdf", type="primary", use_container_width=True)
                 with c2:
                     st.info("📜 Constancia Financiera")
                     if not db_query("SELECT id FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (cdni,)):
-                        if st.button("GENERAR CONSTANCIA DE NO ADEUDO", use_container_width=True):
-                            st.download_button("📥 DESCARGAR CONSTANCIA PDF", generar_pdf_constancia("No Adeudo", nom_comp, cdni), f"Constancia_No_Adeudo_{cdni}.pdf", type="primary", use_container_width=True)
+                        if st.button("GENERAR CONSTANCIA DE NO ADEUDO", use_container_width=True): st.download_button("📥 DESCARGAR CONSTANCIA PDF", generar_pdf_constancia("No Adeudo", nom_comp, cdni), f"Constancia_No_Adeudo_{cdni}.pdf", type="primary", use_container_width=True)
                     else: st.error("El socio tiene deudas activas en el Banquito. NO es posible emitir Constancia de No Adeudo.")
 
     elif m == "📢 COMUNICADOS":
@@ -1172,34 +1029,42 @@ elif st.session_state.vista == 'secretario':
 
     elif m == "🙋 ASISTENCIA":
         fecha_as = st.date_input("Fecha de Asamblea", value=datetime.now()); st.write("Marque la asistencia de los socios:")
-        lista_socios = db_query("SELECT dni, nombres, apellidos FROM socios ORDER BY nombres ASC")
+        lista_socios = db_query("SELECT dni, nombres, apellidos FROM socios WHERE acciones > 0 ORDER BY nombres ASC")
+        
+        m_falta, m_tarde = get_config("multa_falta", 20.0), get_config("multa_tardanza", 10.0)
+        st.info(f"💡 El sistema aplicará automáticamente multas a quienes marquen Tardanza (S/ {f_m(m_tarde)}) o Falta (S/ {f_m(m_falta)}).")
+        
         with st.form("form_asistencia"):
-            for sc in lista_socios: st.radio(f"👤 {sc[1]} {sc[2]} (DNI: {sc[0]})", ["Presente", "Tardanza", "Faltó"], key=f"as_{sc[0]}", horizontal=True); st.divider()
-            if st.form_submit_button("💾 GUARDAR REGISTRO DE ASISTENCIA COMPLETO", type="primary"):
-                for sc in lista_socios: db_query("INSERT INTO asistencia (dni_socio, fecha_asamblea, estado) VALUES (?,?,?)", (sc[0], str(fecha_as), st.session_state[f"as_{sc[0]}"]), fetch=False)
-                st.success(f"La asistencia para el día {format_fecha(str(fecha_as))} fue guardada exitosamente in los registros.")
-                
+            for sc in lista_socios: 
+                st.radio(f"👤 {sc[1]} {sc[2]} (DNI: {sc[0]})", ["Presente", "Tardanza", "Faltó"], key=f"as_{sc[0]}", horizontal=True); st.divider()
+            
+            if st.form_submit_button("💾 GUARDAR ASISTENCIA Y GENERAR MULTAS", type="primary"):
+                for sc in lista_socios: 
+                    estado_asistencia = st.session_state[f"as_{sc[0]}"]
+                    db_query("INSERT INTO asistencia (dni_socio, fecha_asamblea, estado) VALUES (?,?,?)", (sc[0], str(fecha_as), estado_asistencia), fetch=False)
+                    
+                    if estado_asistencia == "Faltó" and m_falta > 0:
+                        db_query("INSERT INTO multas_pendientes (dni_socio, motivo, monto, fecha) VALUES (?,?,?,?)", (sc[0], f"Falta a Asamblea {format_fecha(str(fecha_as))}", m_falta, str(fecha_as)), fetch=False)
+                    elif estado_asistencia == "Tardanza" and m_tarde > 0:
+                        db_query("INSERT INTO multas_pendientes (dni_socio, motivo, monto, fecha) VALUES (?,?,?,?)", (sc[0], f"Tardanza a Asamblea {format_fecha(str(fecha_as))}", m_tarde, str(fecha_as)), fetch=False)
+                        
+                st.success(f"Asistencia guardada. Se generaron las multas correspondientes a las inasistencias y tardanzas.")
+
     elif m == "🎂 CUMPLEAÑOS": ui_cumpleanos_admin(es_tesorero=False)
     elif m == "🗳️ VOTACIONES": ui_votaciones_admin()
 
-# -----------------------------------------------------------------------------
-# VISTA: TESORERO
-# -----------------------------------------------------------------------------
 elif st.session_state.vista == 'tesorero':
     render_top_header()
-    opciones_menu_t = ["📊 PANEL DE CONTROL", "👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "↩️ ANULAR OPERACIÓN"]
-    
+    # AGREGAMOS "💾 BACKUP DEL SISTEMA" AL FINAL DE LA LISTA
+    opciones_menu_t = ["📊 PANEL DE CONTROL", "👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "🎂 CUMPLEAÑOS", "↩️ ANULAR OPERACIÓN", "💾 BACKUP DEL SISTEMA"]
     menu_t = st.radio("MÓDULOS FINANCIEROS:", opciones_menu_t, horizontal=True)
 
-    # Lógica para auto-bloquear las reglas si sale de la pestaña
-    if st.session_state.get('last_menu_t') != menu_t:
-        st.session_state.reglas_unlocked = False
-        st.session_state.last_menu_t = menu_t
+    if st.session_state.get('last_menu_t') != menu_t: st.session_state.reglas_unlocked = False; st.session_state.last_menu_t = menu_t
     
     if menu_t == "📊 PANEL DE CONTROL": ui_panel_control()
                 
     elif menu_t == "👥 SOCIOS Y COMPRAS":
-        t1, t2 = st.tabs(["🔍 BÚSQUEDA AVANZADA Y ACCIONES EXTRA", "📝 REGISTRO DE NUEVO SOCIO"])
+        t1, t2, t3 = st.tabs(["🔍 BÚSQUEDA AVANZADA Y ACCIONES EXTRA", "📝 REGISTRO DE NUEVO SOCIO", "🛑 LIQUIDACIÓN Y RETIRO"])
         with t1:
             dni_busq = st.text_input("🔍 BUSCAR DNI SOCIO:", on_change=limpiar_formularios_socio)
             if dni_busq:
@@ -1283,7 +1148,7 @@ elif st.session_state.vista == 'tesorero':
                                     if ce_ins > 0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Derecho Inscripción Extra - {nombre_fmt} ({ce_acc} acc)", ce_ins, fh), fetch=False)
                                     
                                     txt_v = f"======================================\n      BANQUITO LA COLMENA\n     COMPRA DE ACCION EXTRA\n======================================\nFecha: {format_fecha(fh)}\nSocio: {nom} {ape}\nDNI:   {dni_busq}\n--------------------------------------\n"
-                                    txt_v += f"Acciones Compradas : {ce_acc}\nAportes Nivelacion : S/ {f_m(ce_cap)}\nInteres Nivelacion : S/ {f_m(ce_int)}\nInscripcion        : S/ {f_m(ce_ins)}\n--------------------------------------\nTOTAL INGRESADO    : S/ {f_m(ce_tot)}\n======================================\n\n\n     ____________________________\n          FIRMA DEL SOCIO\n"
+                                    txt_v += f"Acciones Compradas : {ce_acc}\nAportes Nivelacion : S/ {f_m(ce_cap)}\nInteres Nivelacion : S/ {f_m(ce_int)}\nInscripcion        : S/ {f_m(ce_ins)}\n--------------------------------------\nTOTAL INGRESADO    : S/ {f_m(ce_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
                                     
                                     st.session_state.ce_pdf_bytes = generar_pdf_voucher(txt_v, dni_busq)
                                     exito, st.session_state.ce_msg_correo = enviar_correo_generico(cor, "Voucher Compra Acción Extra - Banquito La Colmena", f"Estimado/a {nom} {ape},\n\nAdjuntamos su comprobante de compra de acciones extra.\n\nAtentamente,\nBanquito La Colmena.", st.session_state.ce_pdf_bytes, f"Voucher_Extra_{dni_busq}.pdf")
@@ -1291,6 +1156,66 @@ elif st.session_state.vista == 'tesorero':
                 else: st.error("Socio no encontrado en el sistema.")
                 
         with t2: ui_registro_nuevo_socio()
+
+        with t3:
+            st.error("🛑 Módulo de Retiro Definitivo y Liquidación de Socio")
+            st.write("Al liquidar a un socio, el sistema calculará todo su capital ahorrado, le descontará sus deudas activas y le devolverá la diferencia. El socio perderá sus acciones y quedará inactivo.")
+            
+            liq_dni = st.text_input("Ingrese DNI del socio a liquidar:", key="liq_dni_input")
+            if liq_dni:
+                soc_liq = db_query("SELECT nombres, apellidos, acciones FROM socios WHERE dni=? AND acciones > 0", (liq_dni,))
+                if soc_liq:
+                    l_nom, l_ape, l_acc = soc_liq[0]
+                    nombre_l = f"{l_nom} {l_ape}"
+                    st.subheader(f"Socio: {nombre_l} ({l_acc} Acciones)")
+                    
+                    # 1. Calcular aportes
+                    tot_ahorros = float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{liq_dni}%",))[0][0] or 0.0)
+                    # 2. Calcular deudas activas
+                    deudas_liq = db_query("SELECT SUM(saldo_actual) FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (liq_dni,))
+                    tot_deudas = float(deudas_liq[0][0]) if deudas_liq and deudas_liq[0][0] else 0.0
+                    # 3. Calcular multas pendientes
+                    multas_liq = db_query("SELECT SUM(monto) FROM multas_pendientes WHERE dni_socio=? AND estado='PENDIENTE'", (liq_dni,))
+                    tot_multas = float(multas_liq[0][0]) if multas_liq and multas_liq[0][0] else 0.0
+                    
+                    saldo_a_devolver = tot_ahorros - tot_deudas - tot_multas
+                    
+                    c_l1, c_l2, c_l3, c_l4 = st.columns(4)
+                    c_l1.metric("Total Capital Aportado", f"S/ {f_m(tot_ahorros)}")
+                    c_l2.metric("Deudas por Préstamos", f"- S/ {f_m(tot_deudas)}")
+                    c_l3.metric("Multas Pendientes", f"- S/ {f_m(tot_multas)}")
+                    
+                    if saldo_a_devolver >= 0:
+                        c_l4.metric("Saldo Neto a Entregar", f"S/ {f_m(saldo_a_devolver)}")
+                        st.success(f"El Banquito debe devolverle S/ {f_m(saldo_a_devolver)} al socio de la Caja Principal.")
+                    else:
+                        c_l4.metric("Deuda del Socio a Caja", f"S/ {f_m(abs(saldo_a_devolver))}")
+                        st.error(f"¡CUIDADO! El socio debe S/ {f_m(abs(saldo_a_devolver))} más de lo que tiene ahorrado. Debe pagar en efectivo antes de retirarse.")
+                    
+                    st.divider()
+                    confirmar_liq = st.text_input("Escriba 'LIQUIDAR' para habilitar el botón final:")
+                    if confirmar_liq == "LIQUIDAR":
+                        if st.button("🚨 EJECUTAR RETIRO Y LIQUIDAR SOCIO", type="primary", use_container_width=True):
+                            fh_liq = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            if saldo_a_devolver > 0:
+                                db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (saldo_a_devolver,), fetch=False)
+                                db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Egreso por Liquidación de Socio - {nombre_l}", -saldo_a_devolver, fh_liq), fetch=False)
+                            elif saldo_a_devolver < 0:
+                                db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (abs(saldo_a_devolver),), fetch=False)
+                                db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Cobro por Diferencia en Liquidación - {nombre_l}", abs(saldo_a_devolver), fh_liq), fetch=False)
+
+                            if tot_multas > 0:
+                                db_query("UPDATE multas_pendientes SET estado='LIQUIDADO POR RETIRO' WHERE dni_socio=? AND estado='PENDIENTE'", (liq_dni,), fetch=False)
+                                db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Caja Chica - Multas pagadas en Liquidación de {nombre_l}", tot_multas, fh_liq), fetch=False)
+
+                            db_query("UPDATE prestamos SET estado='LIQUIDADO POR RETIRO', saldo_actual=0 WHERE dni_socio=? AND estado='ACTIVO'", (liq_dni,), fetch=False)
+                            db_query("UPDATE socios SET acciones=0 WHERE dni=?", (liq_dni,), fetch=False)
+                            
+                            pdf_liq_bytes = generar_pdf_acta_liquidacion(nombre_l, liq_dni, tot_ahorros, tot_deudas, tot_multas, saldo_a_devolver)
+                            st.download_button("🖨️ DESCARGAR ACTA DE LIQUIDACIÓN PDF", data=pdf_liq_bytes, file_name=f"Liquidacion_{liq_dni}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                            
+                            st.success(f"✅ ¡El socio {nombre_l} ha sido liquidado correctamente y retirado del padrón activo!")
+                else: st.warning("No se encontró un socio activo con ese DNI.")
 
     elif menu_t == "💳 PAGOS Y PRÉSTAMOS":
         t1, t2, t3 = st.tabs(["💰 REALIZAR PAGO UNIFICADO", "✋ SOLICITUDES EN COLA", "⚖️ EVALUACIÓN Y DESEMBOLSO"])
@@ -1311,9 +1236,21 @@ elif st.session_state.vista == 'tesorero':
                         st.subheader(f"👤 Socio: {n} {a}"); st.write(f"**Acciones Totales:** {acc}"); st.divider()
                         st.markdown("### 📥 Aportes Mensuales")
                         ap_fijo = get_config("aporte_mensual", 0.0)
-                        if st.checkbox(f"Pagar Aportes este mes", value=True):
+                        pagar_ap = st.checkbox(f"Pagar Aportes este mes", value=True)
+                        if pagar_ap:
                             for i in range(1, acc + 1): st.write(f"- Aporte Acción {i}: S/ {f_m(ap_fijo)}")
                         
+                        # --- NUEVO: DETECCIÓN DE MULTAS AUTOMÁTICAS ---
+                        multas = db_query("SELECT id, motivo, monto FROM multas_pendientes WHERE dni_socio=? AND estado='PENDIENTE'", (pdni,))
+                        total_multas, ids_multas_pagar = 0.0, []
+                        if multas:
+                            st.divider(); st.error("🚨 **ALERTA: ESTE SOCIO TIENE MULTAS PENDIENTES**")
+                            for m_id, m_motivo, m_monto in multas:
+                                st.write(f"- 🔴 {m_motivo}: **S/ {f_m(m_monto)}**")
+                                total_multas += float(m_monto)
+                                ids_multas_pagar.append(m_id)
+                            st.warning(f"**Total en Multas a pagar hoy:** S/ {f_m(total_multas)} (Se irá directo a Caja Chica)")
+
                         st.divider(); st.markdown("### 💳 Pago de Préstamos")
                         deudas = db_query("SELECT id, accion_asociada, saldo_actual, monto_original, conteo_minimos FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (pdni,))
                         tasa, amort_pct_act, amort_pct_val, m_min_fijo = get_config("interes_prestamo", 0.0)/100.0, get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0)/100.0, get_config("monto_minimo_capital", 0.0)
@@ -1353,26 +1290,25 @@ elif st.session_state.vista == 'tesorero':
                         else: st.success("✅ El socio no tiene deudas activas.")
                             
                         if st.button("1. CALCULAR DETALLE Y GENERAR VOUCHER", type="primary"):
-                            detalles_aportes, total_aportes = ([(i, ap_fijo) for i in range(1, acc + 1)], acc * ap_fijo) if 'pagar_ap' in locals() and pagar_ap else ([], 0.0)
+                            detalles_aportes, total_aportes = ([(i, ap_fijo) for i in range(1, acc + 1)], acc * ap_fijo) if pagar_ap else ([], 0.0)
                             detalles_prestamos, total_cap, total_int, needs_auth = [], 0.0, 0.0, False
                             for d_id, data in pagos_deudas.items():
                                 if data['cap'] > 0 or data['int'] > 0:
                                     if data['cap'] < data['min_req'] and abs(data['cap'] - data['saldo']) > 0.01: needs_auth = True
                                     detalles_prestamos.append({'id': d_id, 'acc': data['acc'], 'cap': data['cap'], 'int': data['int'], 'saldo': data['saldo'], 'is_min': data['is_min']})
                                     total_cap += data['cap']; total_int += data['int']
-                            if (total_aportes + total_cap + total_int) == 0: st.warning("El monto total a pagar es S/ 0.00. Ingrese algún pago.")
+                            if (total_aportes + total_cap + total_int + total_multas) == 0: st.warning("El monto total a pagar es S/ 0.00. Ingrese algún pago.")
                             else:
-                                st.session_state.update({'pu_tot': total_aportes + total_cap + total_int, 'pu_det_ap': detalles_aportes, 'pu_tot_ap': total_aportes, 'pu_det_pr': detalles_prestamos, 'pu_tot_cap': total_cap, 'pu_tot_int': total_int, 'pu_needs_auth': needs_auth, 'pu_show_voucher': True, 'pu_done': False})
+                                st.session_state.update({'pu_tot': total_aportes + total_cap + total_int + total_multas, 'pu_det_ap': detalles_aportes, 'pu_tot_ap': total_aportes, 'pu_det_pr': detalles_prestamos, 'pu_tot_cap': total_cap, 'pu_tot_int': total_int, 'pu_det_mul': multas, 'pu_tot_mul': total_multas, 'pu_ids_mul': ids_multas_pagar, 'pu_needs_auth': needs_auth, 'pu_show_voucher': True, 'pu_done': False})
                                 
                         if st.session_state.get('pu_show_voucher', False) and not st.session_state.get('pu_done', False):
                             st.markdown("### 🧾 Vista Previa del Voucher")
                             fh_pre = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             txt_v = f"======================================\n      BANQUITO LA COLMENA\n     COMPROBANTE DE PAGO\n======================================\nFecha: {format_fecha(fh_pre)}\nSocio: {n} {a}\nDNI:   {pdni}\n--------------------------------------\n"
-                            if st.session_state.pu_tot_ap > 0:
-                                txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :           S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
-                            if st.session_state.pu_tot_cap > 0 or st.session_state.pu_tot_int > 0:
-                                txt_v += "PAGO DE PRESTAMOS:\n" + "".join([f" - Accion {pr['acc']}:\n      Capital :         S/ {f_m(pr['cap'])}\n      Interes :         S/ {f_m(pr['int'])}\n      Saldo Cap. Act. : S/ {f_m(max(0.0, pr['saldo'] - pr['cap']))}\n" for pr in st.session_state.pu_det_pr]) + f"   Subtotal Prestamos : S/ {f_m(st.session_state.pu_tot_cap + st.session_state.pu_tot_int)}\n--------------------------------------\n"
-                            txt_v += f"TOTAL A PAGAR         : S/ {f_m(st.session_state.pu_tot)}\n======================================\n\n\n     ____________________________\n          FIRMA DEL SOCIO\n"
+                            if st.session_state.pu_tot_ap > 0: txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :           S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
+                            if st.session_state.pu_tot_cap > 0 or st.session_state.pu_tot_int > 0: txt_v += "PAGO DE PRESTAMOS:\n" + "".join([f" - Accion {pr['acc']}:\n      Capital :         S/ {f_m(pr['cap'])}\n      Interes :         S/ {f_m(pr['int'])}\n      Saldo Cap. Act. : S/ {f_m(max(0.0, pr['saldo'] - pr['cap']))}\n" for pr in st.session_state.pu_det_pr]) + f"   Subtotal Prestamos : S/ {f_m(st.session_state.pu_tot_cap + st.session_state.pu_tot_int)}\n--------------------------------------\n"
+                            if st.session_state.pu_tot_mul > 0: txt_v += "MULTAS:\n" + "".join([f" - {m_motivo[:20]:<20} : S/ {f_m(m_monto)}\n" for _, m_motivo, m_monto in st.session_state.pu_det_mul]) + f"   Subtotal Multas    : S/ {f_m(st.session_state.pu_tot_mul)}\n--------------------------------------\n"
+                            txt_v += f"TOTAL A PAGAR         : S/ {f_m(st.session_state.pu_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
                             st.text(txt_v)
                             
                             can_proceed = True
@@ -1400,6 +1336,12 @@ elif st.session_state.vista == 'tesorero':
                                         if pr['cap'] > 0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Pago Cuota Capital - {nombre_fmt} (Acción {pr['acc']})", pr['cap'], fh), fetch=False)
                                         if pr['int'] > 0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Interés Cuota Préstamo - {nombre_fmt} (Acción {pr['acc']})", pr['int'], fh), fetch=False)
                                     
+                                    # --- EJECUCIÓN DEL COBRO DE MULTAS ---
+                                    if st.session_state.pu_tot_mul > 0:
+                                        db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (st.session_state.pu_tot_mul,), fetch=False)
+                                        db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Caja Chica - Pago Multas de {nombre_fmt}", st.session_state.pu_tot_mul, fh), fetch=False)
+                                        for m_id in st.session_state.pu_ids_mul: db_query("UPDATE multas_pendientes SET estado='PAGADO' WHERE id=?", (m_id,), fetch=False)
+
                                     st.session_state.pu_pdf_bytes = generar_pdf_voucher(txt_v, pdni)
                                     exito, st.session_state.pu_msg_correo = enviar_correo_generico(correo, "Voucher de Pago - Banquito La Colmena", f"Estimado/a {n} {a},\n\nAdjuntamos su comprobante de pago de la fecha.\n\nAtentamente,\nBanquito La Colmena.", st.session_state.pu_pdf_bytes, f"Voucher_Pago_{pdni}.pdf")
                                     st.session_state.update({'pu_done': True, 'pu_auth_success': False}); st.rerun()
@@ -1442,7 +1384,7 @@ elif st.session_state.vista == 'tesorero':
                 else: st.info("No hay solicitudes en espera.")
             
         with t3:
-            st.write("El sistema ordena automáticamente a los solicitantes dando **máxima prioridad a quienes tienen la MENOR deuda actual**. Evalúe y atienda uno por uno de manera estricta.")
+            st.write("El sistema ordena automáticamente a los solicitantes dando **máxima prioridad a quienes tienen la MENOR deuda actual**.")
             caja_prin_disp = (float(db_query("SELECT SUM(monto) FROM movimientos")[0][0] or 0.0) - ((db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Ingreso Caja Chica%' OR tipo = 'Depósito Caja'")[0][0] or 0.0) - abs(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Egreso Caja Chica%' OR tipo = 'Retiro Caja'")[0][0] or 0.0)))
             st.info(f"💰 **Fondo Disponible en Caja Principal:** S/ {f_m(caja_prin_disp)}")
             
@@ -1597,10 +1539,8 @@ elif st.session_state.vista == 'tesorero':
             if deuda > 0.01: morosos = True
             resumen_socios.append((f"{s_nom.split()[0]} {s_ape.split()[0]}", s_acc, f_m(ap_socio / s_acc if s_acc > 0 else 0.0), f_m(ap_socio), f_m(cap_esperado_por_accion * s_acc), estado))
             
-        if morosos:
-            st.error("⚠️ **ALERTA: Existen socios que no han pagado la cantidad correcta de aportes.** Revisa la columna 'Estado'.")
-        else:
-            st.success("✅ ¡Felicidades! Todos los socios están al día (o tienen saldo adelantado).")
+        if morosos: st.error("⚠️ **ALERTA: Existen socios que no han pagado la cantidad correcta de aportes.** Revisa la columna 'Estado'.")
+        else: st.success("✅ ¡Felicidades! Todos los socios están al día (o tienen saldo adelantado).")
             
         st.dataframe(pd.DataFrame(resumen_socios, columns=["Socio", "Acciones", "Tiene por Acción (S/)", "Total Aportado (S/)", "Debería Tener (S/)", "Estado"]), use_container_width=True)
         
@@ -1613,10 +1553,8 @@ elif st.session_state.vista == 'tesorero':
             soc_b = db_query("SELECT nombres, apellidos FROM socios WHERE dni=?", (caja_f_dni,))
             if soc_b:
                 nombre_fmt_b = f"{soc_b[0][0].split()[0]} {soc_b[0][1].split()[0] if soc_b[0][1] else ''}".strip()
-                query += " AND (tipo LIKE ? OR tipo LIKE ?)"
-                params.extend([f"%{caja_f_dni}%", f"%{nombre_fmt_b}%"])
-            else:
-                query += " AND tipo LIKE ?"; params.append(f"%{caja_f_dni}%")
+                query += " AND (tipo LIKE ? OR tipo LIKE ?)"; params.extend([f"%{caja_f_dni}%", f"%{nombre_fmt_b}%"])
+            else: query += " AND tipo LIKE ?"; params.append(f"%{caja_f_dni}%")
         query += " ORDER BY fecha DESC"
         
         movs_caja = db_query(query, tuple(params))
@@ -1701,7 +1639,17 @@ elif st.session_state.vista == 'tesorero':
 
         with st.expander("🔮 Proyección de Ganancias a Diciembre (Cierre de Año)", expanded=False):
             tasa, m_min = get_config("interes_prestamo", 0.0) / 100.0, get_config("monto_minimo_capital", 50.0)
-            meses_restantes = max(0, 12 - datetime.now().month)
+            
+            # --- DETECCIÓN INTELIGENTE DEL MES ACTUAL ---
+            mes_actual_str = datetime.now().strftime("%Y-%m")
+            # Buscamos si ya hubo cobro de intereses reales este mes
+            pagos_este_mes = db_query("SELECT id FROM movimientos WHERE tipo LIKE '%nter%' AND fecha LIKE ?", (f"{mes_actual_str}%",))
+            
+            # Si no hay pagos de intereses este mes, sumamos 1 para incluir el mes actual en la proyección
+            ajuste_mes_actual = 0 if pagos_este_mes else 1
+            meses_restantes = max(0, 12 - datetime.now().month + ajuste_mes_actual)
+            # --------------------------------------------
+            
             proyeccion_futura_int = 0.0
             
             prestamos_activos = db_query("SELECT saldo_actual FROM prestamos WHERE estado='ACTIVO'")
@@ -1709,10 +1657,12 @@ elif st.session_state.vista == 'tesorero':
                 for p in prestamos_activos:
                     saldo_sim = p[0]
                     for _ in range(meses_restantes):
-                        if saldo_sim > 0.01:
-                            int_mes = float(math.ceil(saldo_sim * tasa)); proyeccion_futura_int += int_mes; saldo_sim -= min(m_min if m_min > 0 else 50.0, saldo_sim)
+                        if saldo_sim > 0.01: 
+                            int_mes = float(math.ceil(saldo_sim * tasa))
+                            proyeccion_futura_int += int_mes
+                            saldo_sim -= min(m_min if m_min > 0 else 50.0, saldo_sim)
                             
-            st.write(f"Meses restantes hasta Diciembre: **{meses_restantes}**")
+            st.write(f"Meses proyectados hasta Diciembre: **{meses_restantes}** (Incluye el mes actual si aún no has cobrado cuotas)")
             c_proy1, c_proy2, c_proy3 = st.columns(3)
             c_proy1.metric("Pozo Actual Disponible", f"S/ {f_m(tot_int_disponible)}")
             c_proy2.metric(f"Intereses Futuros Estimados", f"S/ {f_m(proyeccion_futura_int)}")
@@ -1724,9 +1674,7 @@ elif st.session_state.vista == 'tesorero':
             
             st.write("### 1. Pago a la Junta Directiva (3%)")
             seleccionados = st.multiselect("Seleccione a los directivos que recibirán pago en este momento:", directivos, default=directivos)
-            
-            monto_3_pct = tot_int_disponible * 0.03
-            excedente_3 = monto_3_pct
+            monto_3_pct, excedente_3 = tot_int_disponible * 0.03, tot_int_disponible * 0.03
             
             if seleccionados:
                 pago_cu_truncado = truncar_a_un_decimal(monto_3_pct / len(seleccionados))
@@ -1763,8 +1711,7 @@ elif st.session_state.vista == 'tesorero':
             todos_pagados = True
             if pago_por_accion_truncado > 0:
                 for s_dni, s_nom, s_ape, s_acc in socios_data:
-                    if not db_query("SELECT id FROM movimientos WHERE tipo = ? AND monto < 0", (f"Pago Utilidades {anio_actual} - {s_dni} ({s_acc} acc)",)):
-                        todos_pagados = False; break
+                    if not db_query("SELECT id FROM movimientos WHERE tipo = ? AND monto < 0", (f"Pago Utilidades {anio_actual} - {s_dni} ({s_acc} acc)",)): todos_pagados = False; break
 
             if sobrante_caja_chica > 0.01:
                 if db_query("SELECT id FROM movimientos WHERE tipo = ?", (f"Ingreso Caja Chica - Sobrante Utilidades {anio_actual}",)): st.success("✅ El sobrante ya fue trasladado a Caja Chica.")
@@ -1805,6 +1752,58 @@ elif st.session_state.vista == 'tesorero':
         else: st.warning("No hay acciones registradas o no se han generado intereses para repartir.")
 
     elif menu_t == "🎂 CUMPLEAÑOS": ui_cumpleanos_admin(es_tesorero=True)
+
+    elif menu_t == "💾 BACKUP DEL SISTEMA":
+        st.subheader("💾 Copia de Seguridad Total (.db)")
+        st.write("Descarga una réplica exacta de tu base de datos en formato SQLite (.db), compatible con visores de bases de datos.")
+        
+        todas_las_tablas = [
+            "usuarios", "cuentas", "configuracion", "socios", "prestamos",
+            "movimientos", "tramites", "comunicados", "asistencia",
+            "votaciones", "votos", "multas_pendientes", "cumpleanos_pagos",
+            "solicitudes_prestamo", "historial_anulaciones"
+        ]
+        
+        if st.button("📦 FABRICAR Y DESCARGAR BASE DE DATOS (.db)", type="primary", use_container_width=True):
+            conn_pg = obtener_conexion()
+            db_temporal = "backup_temporal_banquito.db"
+            
+            try:
+                # 1. Creamos un archivo .db vacío temporalmente
+                conn_sqlite = sqlite3.connect(db_temporal)
+                
+                # 2. Extraemos de la nube (PostgreSQL) y lo inyectamos al archivo local (SQLite)
+                for tabla in todas_las_tablas:
+                    df = pd.read_sql(f"SELECT * FROM {tabla}", conn_pg)
+                    if not df.empty:
+                        df.to_sql(tabla, conn_sqlite, if_exists='replace', index=False)
+                
+                conn_sqlite.close()
+                
+                # 3. Leemos el archivo recién horneado para la descarga
+                with open(db_temporal, "rb") as f:
+                    db_bytes = f.read()
+                    
+                fecha_hoy = datetime.now().strftime("%Y_%m_%d")
+                
+                st.success("✅ ¡Base de datos convertida a SQLite exitosamente!")
+                st.download_button(
+                    label=f"📥 DESCARGAR BANQUITO_FULL_{fecha_hoy}.db", 
+                    data=db_bytes, 
+                    file_name=f"Banquito_Full_{fecha_hoy}.db", 
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
+                
+            except Exception as e:
+                st.error(f"Error al generar el archivo .db: {e}")
+            finally:
+                conn_pg.close()
+                st.cache_resource.clear()
+                
+                # 4. Limpieza: borramos el archivo temporal para no dejar basura en el sistema
+                if os.path.exists(db_temporal):
+                    os.remove(db_temporal)
 
     elif menu_t == "↩️ ANULAR OPERACIÓN":
         st.subheader("↩️ Anular Operación (Corrección de Errores)")
