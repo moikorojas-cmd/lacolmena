@@ -11,6 +11,7 @@ import random
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
+from email.mime.image import MIMEImage
 import urllib.parse
 import streamlit.components.v1 as components
 import altair as alt
@@ -107,13 +108,29 @@ def enviar_correo_generico(destinatario, asunto, cuerpo, pdf_bytes=None, pdf_nom
     if not destinatario or str(destinatario).strip() == "": return False, "ℹ️ Socio sin correo registrado."
     try:
         REMITENTE, PASSWORD = "lacolmenabanco@gmail.com", "fvux bnfk qbzv brad"
-        msg = MIMEMultipart()
-        msg['Subject'], msg['From'], msg['To'] = asunto, f"Banquito La Colmena <{REMITENTE}>", destinatario
-        msg.attach(MIMEText(cuerpo, 'plain', 'utf-8'))
+        msg = MIMEMultipart('related')
+        msg['Subject'], msg['From'], msg['To'] = asunto, f"Banco La Colmena del Perú <{REMITENTE}>", destinatario
+        
+        msg_alt = MIMEMultipart('alternative')
+        msg.attach(msg_alt)
+        
+        cuerpo_html = f'<html><body style="background-color: #f8fafc; padding: 20px; font-family: Arial, sans-serif;"><div style="text-align: center; margin-bottom: 20px;"><img src="cid:logo_id" width="150" style="border-radius: 10px;"></div><div style="background-color: white; padding: 20px; border-radius: 10px; color: #1e3a8a;"><p>{cuerpo.replace(chr(10), "<br>")}</p></div></body></html>'
+        
+        msg_alt.attach(MIMEText(cuerpo, 'plain', 'utf-8'))
+        msg_alt.attach(MIMEText(cuerpo_html, 'html', 'utf-8'))
+        
+        if os.path.exists("logo.png"):
+            with open("logo.png", "rb") as f_img:
+                img = MIMEImage(f_img.read())
+                img.add_header('Content-ID', '<logo_id>')
+                img.add_header('Content-Disposition', 'inline', filename="logo.png")
+                msg.attach(img)
+                
         if pdf_bytes and pdf_nombre:
             adj = MIMEApplication(pdf_bytes, _subtype="pdf")
             adj.add_header('Content-Disposition', 'attachment', filename=pdf_nombre)
             msg.attach(adj)
+            
         server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(REMITENTE, PASSWORD); server.send_message(msg); server.quit()
         return True, "✅ Correo enviado con éxito."
     except Exception as e: return False, f"⚠️ Fallo el envío de correo: {e}"
@@ -225,6 +242,7 @@ def obtener_estado_cumpleanos():
 # =============================================================================
 def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.cell(0, 10, "BANQUITO LA COLMENA - REPORTE DE CAJA", ln=True, align='C'); pdf.set_font("Courier", size=10)
     pdf.cell(0, 6, f"Rango de fechas: {format_fecha(str(f_ini))} al {format_fecha(str(f_fin))}", ln=True)
     if dni_filtro: pdf.cell(0, 6, f"Filtro aplicado (DNI/Nombre): {dni_filtro}", ln=True)
@@ -255,6 +273,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
         movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE tipo LIKE ? ORDER BY fecha ASC", (filtro,))
         rango_str = "Rango: Histórico Completo"
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=9)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANQUITO LA COLMENA 🐝\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     reporte_texto, saldo_acumulado, historial_agrupado = header, 0.0, {}
     for m in movs:
@@ -307,9 +326,11 @@ def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, f
     nom_presi, nom_teso, nom_secri, anio_actual = get_config("presidente", "No asignado", str), get_config("tesorero", "No asignado", str), get_config("secretario", "No asignado", str), datetime.now().year
     pdf = FPDF(); fh_fmt = format_fecha(fh)
     pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "BANQUITO LA COLMENA - VOUCHER DE DESEMBOLSO", ln=True, align='C'); pdf.set_font("Courier", size=12); pdf.ln(5)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     texto_v = f"Fecha: {fh_fmt}\nSocio: {nom_soc}\nDNI:   {d} | Accion Vinculada: {n_a}\n" + "-"*50 + f"\nMONTO DESEMBOLSADO EN EFECTIVO : S/ {m_prestado:.2f}\n" + "-"*50 + "\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
     for l in texto_v.split('\n'): pdf.cell(0, 6, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
     pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "CRONOGRAMA DE PRESTAMO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     tc = f"Socio: {nom_soc}\nDNI: {d} | Accion: {n_a}\nFecha de Emision: {fh_fmt}\nDeuda Total Capital: S/ {m_proy:.2f} | Int. Proyectado: S/ {tot_i:.2f} | Total a Pagar: S/ {m_proy+tot_i:.2f}\n--------------------------------------------------------------------------\n{'NRO CUOTA':<10} | {'MES Y AÑO':<17} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n--------------------------------------------------------------------------\n"
     saldo = m_proy
     for c in cuotas: 
@@ -340,6 +361,7 @@ def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, f
 
 def generar_pdf_voucher(t, d):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=12)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     for l in t.replace("🐝", "").split('\n'): pdf.cell(0, 6, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
     f = f"V_{d}.pdf"; pdf.output(f)
     with open(f, "rb") as fi: b = fi.read()
@@ -347,6 +369,7 @@ def generar_pdf_voucher(t, d):
 
 def generar_pdf_constancia(tipo, socio_nom, dni):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 15, "BANQUITO LA COLMENA", ln=True, align='C')
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, f"CONSTANCIA DE {tipo.upper()}", ln=True, align='C'); pdf.ln(10)
     pdf.set_font("Arial", '', 12); fecha_hoy = datetime.now().strftime("%d de %B de %Y")
     if tipo == "Socio Activo": texto = f"La Junta Directiva del Banquito La Colmena hace constar que el Sr(a). {socio_nom.upper()}, identificado con DNI {dni}, se encuentra registrado como SOCIO ACTIVO de nuestra institucion, cumpliendo con sus aportaciones a la fecha.\n\nSe expide el presente documento a solicitud del interesado para los fines que considere convenientes."
@@ -364,6 +387,7 @@ def generar_pdf_acta_cierre(anio):
     movs_cc = db_query("SELECT monto FROM movimientos WHERE tipo = ?", (f"Ingreso Caja Chica - Sobrante Utilidades {anio}",))
     sobrante_cc = sum([float(m[0]) for m in movs_cc]) if movs_cc else 0.0
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, f"ACTA DE CIERRE Y REPARTO DE UTILIDADES - AÑO {anio}", ln=True, align='C'); pdf.ln(5)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.set_font("Arial", '', 11)
     intro = f"En la presente asamblea general de cierre del año {anio}, la Junta Directiva del BANQUITO LA COLMENA, conformada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, deja constancia de la distribution de las utilidades generadas por los intereses de los préstamos durante el periodo correspondiente."
     pdf.multi_cell(0, 6, txt=intro.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(5)
@@ -391,6 +415,7 @@ def generar_pdf_acta_cierre(anio):
 
 def generar_pdf_acta_liquidacion(nombre, dni, aportes, deudas, multas, neto):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
+    if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.cell(0, 10, "BANQUITO LA COLMENA - ACTA DE LIQUIDACION Y RETIRO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
     texto = f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\nSocio: {nombre}\nDNI:   {dni}\n" + "-"*60 + "\n"
     texto += f"1. Total Capital Aportado :  S/ {aportes:.2f}\n2. Deudas por Prestamos   : -S/ {deudas:.2f}\n3. Multas Pendientes      : -S/ {multas:.2f}\n" + "-"*60 + "\n"
@@ -422,14 +447,17 @@ def update_monto_inline(sol_id, input_key):
 def render_top_header():
     st.markdown("<br><br>", unsafe_allow_html=True)
     with st.container():
-        col_head1, col_head2 = st.columns([4, 1])
+        col_logo, col_head1, col_head2 = st.columns([1, 4, 1])
         nombre = st.session_state.usuario_nombre if st.session_state.usuario_id else st.session_state.socio_nombre
         rol = st.session_state.usuario_rol.upper() if st.session_state.usuario_id else "SOCIO"
+        
+        with col_logo:
+            if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
         with col_head1:
-            st.markdown(f"<h2 style='color: #1e3a8a; margin-bottom: 0px; padding-bottom: 0px;'>🐝 BIENVENIDO(A), {nombre}</h2>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='color: #1e3a8a; margin-bottom: 0px; padding-bottom: 0px; margin-top: 15px;'>BIENVENIDO(A), {nombre}</h2>", unsafe_allow_html=True)
             st.markdown(f"<p style='color: #64748b; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; margin-top: 0px;'>PERFIL: {rol}</p>", unsafe_allow_html=True)
         with col_head2:
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top: 25px;'></div>", unsafe_allow_html=True)
             if st.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
                 st.session_state.update({'usuario_id': None, 'usuario_rol': None, 'usuario_nombre': None, 'socio_logged_in': False, 'socio_dni': None, 'socio_nombre': None, 'vista': 'login'})
                 st.rerun()
@@ -646,7 +674,10 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
     else:
         st.markdown("<br><br>", unsafe_allow_html=True); col_log1, col_log2, col_log3 = st.columns([1, 2, 1])
         with col_log2:
-            st.markdown("<h1 style='text-align: center; color: #b45309;'>🐝 BANQUITO LA COLMENA</h1><p style='text-align: center; color: #64748b; font-size: 1.2rem; font-weight: 700; text-transform: uppercase;'>Portal Integrado de Socios y Directiva</p>", unsafe_allow_html=True)
+            if os.path.exists("logo.png"):
+                c_img1, c_img2, c_img3 = st.columns([1, 1, 1])
+                c_img2.image("logo.png", use_container_width=True)
+            st.markdown("<h1 style='text-align: center; color: #b45309;'>BANCO LA COLMENA DEL PERÚ</h1><p style='text-align: center; color: #64748b; font-size: 1.2rem; font-weight: 700; text-transform: uppercase;'>Portal Integrado de Socios y Directiva</p>", unsafe_allow_html=True)
             t_acc, t_rec = st.tabs(["🔐 INGRESAR", "🆘 RECUPERAR CLAVE"])
             with t_acc:
                 with st.form("main_login_form"):
