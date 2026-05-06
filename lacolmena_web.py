@@ -28,7 +28,7 @@ except ImportError:
 # =============================================================================
 # 1. CONFIGURACIÓN INICIAL, BASE DE DATOS Y DISEÑO (CSS)
 # =============================================================================
-st.set_page_config(page_title="Banquito La Colmena", page_icon="🐝", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Banco La Colmena", page_icon="🐝", layout="wide", initial_sidebar_state="collapsed")
 
 def f_m(valor):
     if valor is None: return "0.00"
@@ -57,7 +57,7 @@ st.markdown("""
     .stAlert { border-radius: 10px; }
     .fixed-footer { position: fixed; bottom: 0; left: 0; width: 100%; background-color: #e2e8f0; color: #334155; text-align: center; padding: 12px 0; font-size: 15px; font-weight: 800; border-top: 3px solid #cbd5e1; z-index: 99999; box-shadow: 0 -2px 10px rgba(0,0,0,0.05); }
     </style>
-    <div class="fixed-footer">Banquito La Colmena V 1.0 / Ing. Juan Moisés Rojas De La Torre / CIP: 273739.</div>
+    <div class="fixed-footer">Banco La Colmena del Perú V 1.0 / Ing. Juan Moisés Rojas De La Torre / CIP: 273739.</div>
 """, unsafe_allow_html=True)
 
 # 🔐 TU LLAVE MAESTRA A LA NUBE
@@ -109,7 +109,7 @@ def enviar_correo_generico(destinatario, asunto, cuerpo, pdf_bytes=None, pdf_nom
     try:
         REMITENTE, PASSWORD = "lacolmenabanco@gmail.com", "fvux bnfk qbzv brad"
         msg = MIMEMultipart('related')
-        msg['Subject'], msg['From'], msg['To'] = asunto, f"Banco El Pino Dorado del Perú <{REMITENTE}>", destinatario
+        msg['Subject'], msg['From'], msg['To'] = asunto, f"Banco La Colmena del Perú <{REMITENTE}>", destinatario
         
         msg_alt = MIMEMultipart('alternative')
         msg.attach(msg_alt)
@@ -140,7 +140,7 @@ def enviar_alerta_correo(usuario_intruso):
     st.toast(f"📧 ALERTA ENVIADA AL CORREO DEL PRESIDENTE: Intento de acceso a la bóveda.", icon="🚨")
     if correo_presi:
         cuerpo = f"🚨 ALERTA DE SEGURIDAD 🚨\n\nEl usuario '{usuario_intruso}' acaba de intentar acceder a la bóveda del sistema fuera de la fecha agendada.\n\nFecha y Hora del intento: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
-        enviar_correo_generico(correo_presi, "🚨 ALERTA DE SEGURIDAD - Banquito El Pino Dorado", cuerpo)
+        enviar_correo_generico(correo_presi, "🚨 ALERTA DE SEGURIDAD - Banco La Colmena del Perú", cuerpo)
 
 def format_fecha(fecha_str):
     if not fecha_str: return ""
@@ -244,7 +244,7 @@ def obtener_estado_cumpleanos():
 def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
-    pdf.cell(0, 10, "BANQUITO EL PINO DORADO - REPORTE DE CAJA", ln=True, align='C'); pdf.set_font("Courier", size=10)
+    pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - REPORTE DE CAJA", ln=True, align='C'); pdf.set_font("Courier", size=10)
     pdf.cell(0, 6, f"Rango de fechas: {format_fecha(str(f_ini))} al {format_fecha(str(f_fin))}", ln=True)
     if dni_filtro: pdf.cell(0, 6, f"Filtro aplicado (DNI/Nombre): {dni_filtro}", ln=True)
     pdf.cell(0, 6, f"Fecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ln=True); pdf.ln(5)
@@ -275,7 +275,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
         rango_str = "Rango: Histórico Completo"
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=9)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
-    header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANQUITO EL PINO DORADO 🌲\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
+    header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANCO LA COLMENA DEL PERÚ 🐝\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     reporte_texto, saldo_acumulado, historial_agrupado = header, 0.0, {}
     for m in movs:
         f, t, mon = m[0], m[1], m[2]; f_dia = f[:10] 
@@ -325,7 +325,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
 def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, fh, tasa, incluir_contrato=True):
     nom_presi, nom_teso, nom_secri, anio_actual = get_config("presidente", "No asignado", str), get_config("tesorero", "No asignado", str), get_config("secretario", "No asignado", str), datetime.now().year
     pdf = FPDF(); fh_fmt = format_fecha(fh)
-    pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "BANQUITO EL PINO DORADO - VOUCHER DE DESEMBOLSO", ln=True, align='C'); pdf.set_font("Courier", size=12); pdf.ln(5)
+    pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - VOUCHER DE DESEMBOLSO", ln=True, align='C'); pdf.set_font("Courier", size=12); pdf.ln(5)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     texto_v = f"Fecha: {fh_fmt}\nSocio: {nom_soc}\nDNI:   {d} | Accion Vinculada: {n_a}\n" + "-"*50 + f"\nMONTO DESEMBOLSADO EN EFECTIVO : S/ {m_prestado:.2f}\n" + "-"*50 + "\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
     for l in texto_v.split('\n'): pdf.cell(0, 6, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
@@ -339,7 +339,7 @@ def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, f
     for l in tc.split('\n'): pdf.cell(0, 5, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
     if incluir_contrato:
         pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "CONTRATO PRIVADO DE PRÉSTAMO DE DINERO", ln=True, align='C'); pdf.ln(5); pdf.set_font("Arial", '', 11)
-        intro = f"Conste por el presente documento privado de préstamo de dinero que celebran, de una parte, la Junta Directiva del periodo {anio_actual} del BANQUITO EL PINO DORADO, debidamente representada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, a quienes en adelante se les denominará EL PRESTAMISTA; y de la otra parte, el/la socio(a) {nom_soc}, identificado(a) con DNI Nro. {d}, a quien en adelante se le denominará EL PRESTATARIO; quienes convienen en celebrar el presente contrato bajo los terms y condiciones contenidos en las siguientes cláusulas:"
+        intro = f"Conste por el presente documento privado de préstamo de dinero que celebran, de una parte, la Junta Directiva del periodo {anio_actual} del BANCO LA COLMENA DEL PERÚ, debidamente representada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, a quienes en adelante se les denominará EL PRESTAMISTA; y de la otra parte, el/la socio(a) {nom_soc}, identificado(a) con DNI Nro. {d}, a quien en adelante se le denominará EL PRESTATARIO; quienes convienen en celebrar el presente contrato bajo los terms y condiciones contenidos en las siguientes cláusulas:"
         pdf.multi_cell(0, 6, txt=intro.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(5)
         pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "PRIMERA: DEL PRÉSTAMO Y LA DEUDA TOTAL", ln=True, align='L'); pdf.set_font("Arial", '', 11)
         clausula_1 = f"EL PRESTAMISTA otorga a EL PRESTATARIO un nuevo desembolso en efectivo por la suma de S/ {m_prestado:.2f}. " + (f"Sumado al saldo deudor anterior, la DEUDA TOTAL ACTUALIZADA asciende a la suma de S/ {m_proy:.2f}, " if m_proy > m_prestado else f"La DEUDA TOTAL ACTUALIZADA asciende a la suma de S/ {m_proy:.2f}, ") + f"vinculada a la Acción Nro. {n_a}."
@@ -362,18 +362,18 @@ def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, f
 def generar_pdf_voucher(t, d):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=12)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
-    for l in t.replace("🌲", "").split('\n'): pdf.cell(0, 6, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
+    for l in t.replace("🐝", "").split('\n'): pdf.cell(0, 6, txt=l.encode('latin-1','ignore').decode('latin-1'), ln=True)
     f = f"V_{d}.pdf"; pdf.output(f)
     with open(f, "rb") as fi: b = fi.read()
     os.remove(f); return b
 
 def generar_pdf_constancia(tipo, socio_nom, dni):
-    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 15, "BANQUITO EL PINO DORADO", ln=True, align='C')
+    pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 15, "BANCO LA COLMENA DEL PERÚ", ln=True, align='C')
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, f"CONSTANCIA DE {tipo.upper()}", ln=True, align='C'); pdf.ln(10)
     pdf.set_font("Arial", '', 12); fecha_hoy = datetime.now().strftime("%d de %B de %Y")
-    if tipo == "Socio Activo": texto = f"La Junta Directiva del Banquito El Pino Dorado hace constar que el Sr(a). {socio_nom.upper()}, identificado con DNI {dni}, se encuentra registrado como SOCIO ACTIVO de nuestra institucion, cumpliendo con sus aportaciones a la fecha.\n\nSe expide el presente documento a solicitud del interesado para los fines que considere convenientes."
-    else: texto = f"La Junta Directiva del Banquito El Pino Dorado certifica que el Sr(a). {socio_nom.upper()}, con DNI {dni}, NO MANTIENE DEUDAS PENDIENTES por concepto de prestamos en ninguna de sus acciones a la fecha de hoy.\n\nSe extiende la presente constancia para acreditar su solvencia interna dentro de la organizacion."
+    if tipo == "Socio Activo": texto = f"La Junta Directiva del Banco La Colmena del Perú hace constar que el Sr(a). {socio_nom.upper()}, identificado con DNI {dni}, se encuentra registrado como SOCIO ACTIVO de nuestra institucion, cumpliendo con sus aportaciones a la fecha.\n\nSe expide el presente documento a solicitud del interesado para los fines que considere convenientes."
+    else: texto = f"La Junta Directiva del Banco La Colmena del Perú certifica que el Sr(a). {socio_nom.upper()}, con DNI {dni}, NO MANTIENE DEUDAS PENDIENTES por concepto de prestamos en ninguna de sus acciones a la fecha de hoy.\n\nSe extiende la presente constancia para acreditar su solvencia interna dentro de la organizacion."
     pdf.multi_cell(0, 8, txt=texto.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(30)
     pdf.cell(0, 10, "__________________________", ln=True, align='C'); pdf.cell(0, 5, "Secretaria / Junta Directiva", ln=True, align='C'); pdf.cell(0, 5, f"Fecha: {fecha_hoy}", ln=True, align='C')
     f = f"C_{dni}.pdf"; pdf.output(f)
@@ -389,7 +389,7 @@ def generar_pdf_acta_cierre(anio):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, f"ACTA DE CIERRE Y REPARTO DE UTILIDADES - AÑO {anio}", ln=True, align='C'); pdf.ln(5)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.set_font("Arial", '', 11)
-    intro = f"En la presente asamblea general de cierre del año {anio}, la Junta Directiva del BANQUITO EL PINO DORADO, conformada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, deja constancia de la distribution de las utilidades generadas por los intereses de los préstamos durante el periodo correspondiente."
+    intro = f"En la presente asamblea general de cierre del año {anio}, la Junta Directiva del BANCO LA COLMENA DEL PERÚ, conformada por su Presidente(a): {nom_presi}, Tesorero(a): {nom_teso} y Secretario(a): {nom_secri}, deja constancia de la distribution de las utilidades generadas por los intereses de los préstamos durante el periodo correspondiente."
     pdf.multi_cell(0, 6, txt=intro.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(5)
     pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "1. PAGO A LA JUNTA DIRECTIVA (3%)", ln=True); pdf.set_font("Arial", '', 11); tot_dir = 0.0
     if movs_dir:
@@ -416,7 +416,7 @@ def generar_pdf_acta_cierre(anio):
 def generar_pdf_acta_liquidacion(nombre, dni, aportes, deudas, multas, neto):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
-    pdf.cell(0, 10, "BANQUITO EL PINO DORADO - ACTA DE LIQUIDACION Y RETIRO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
+    pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - ACTA DE LIQUIDACION Y RETIRO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
     texto = f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\nSocio: {nombre}\nDNI:   {dni}\n" + "-"*60 + "\n"
     texto += f"1. Total Capital Aportado :  S/ {aportes:.2f}\n2. Deudas por Prestamos   : -S/ {deudas:.2f}\n3. Multas Pendientes      : -S/ {multas:.2f}\n" + "-"*60 + "\n"
     if neto >= 0: texto += f"SALDO NETO A DEVOLVER AL SOCIO : S/ {neto:.2f}\n" + "-"*60 + "\n\n"
@@ -636,11 +636,11 @@ def ui_registro_nuevo_socio():
                     if t_cap>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Aporte Inicial - {nombre_fmt} ({racc} acc)", t_cap, fh), fetch=False)
                     if t_int>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Interés Inicial - {nombre_fmt} ({racc} acc)", t_int, fh), fetch=False)
                     if t_ins>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Derecho Inscripción - {nombre_fmt} ({racc} acc)", t_ins, fh), fetch=False)
-                    txt_ns = f"======================================\n      BANQUITO EL PINO DORADO\n      INGRESO DE NUEVO SOCIO\n======================================\nFecha: {format_fecha(fh)}\nSocio: {rnom} {rape}\nDNI:   {rdni}\n--------------------------------------\n"
+                    txt_ns = f"======================================\n      BANCO LA COLMENA DEL PERÚ\n      INGRESO DE NUEVO SOCIO\n======================================\nFecha: {format_fecha(fh)}\nSocio: {rnom} {rape}\nDNI:   {rdni}\n--------------------------------------\n"
                     txt_ns += f"Acciones Iniciales : {racc}\nAportes Nivelacion : S/ {f_m(t_cap)}\nInteres Nivelacion : S/ {f_m(t_int)}\nInscripcion        : S/ {f_m(t_ins)}\n--------------------------------------\nTOTAL INGRESADO    : S/ {f_m(t_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
                     pdf_bytes = generar_pdf_voucher(txt_ns, rdni); st.session_state.ns_pdf_bytes = pdf_bytes
-                    cuerpo = f"Estimado/a {rnom} {rape},\n\n¡Bienvenido/a al Banquito El Pino Dorado!\nAdjuntamos su comprobante de ingreso.\n\nAtentamente,\nLa Junta Directiva."
-                    exito, st.session_state.ns_msg_correo = enviar_correo_generico(rcor, "Bienvenido al Banquito - Voucher de Ingreso", cuerpo, pdf_bytes, f"Voucher_Ingreso_{rdni}.pdf")
+                    cuerpo = f"Estimado/a {rnom} {rape},\n\n¡Bienvenido/a al Banco La Colmena del Perú!\nAdjuntamos su comprobante de ingreso.\n\nAtentamente,\nLa Junta Directiva."
+                    exito, st.session_state.ns_msg_correo = enviar_correo_generico(rcor, "Bienvenido a La Colmena - Voucher de Ingreso", cuerpo, pdf_bytes, f"Voucher_Ingreso_{rdni}.pdf")
                     st.session_state.ns_done = True; st.rerun()
 
 # =============================================================================
@@ -677,7 +677,7 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
             if os.path.exists("logo.png"):
                 c_img1, c_img2, c_img3 = st.columns([1, 1, 1])
                 c_img2.image("logo.png", use_container_width=True)
-            st.markdown("<h1 style='text-align: center; color: #b45309;'>BANCO EL PINO DORADO DEL PERÚ</h1><p style='text-align: center; color: #64748b; font-size: 1.2rem; font-weight: 700; text-transform: uppercase;'>Portal Integrado de Socios y Directiva</p>", unsafe_allow_html=True)
+            st.markdown("<h1 style='text-align: center; color: #b45309;'>BANCO LA COLMENA DEL PERÚ</h1><p style='text-align: center; color: #64748b; font-size: 1.2rem; font-weight: 700; text-transform: uppercase;'>Portal Integrado de Socios y Directiva</p>", unsafe_allow_html=True)
             t_acc, t_rec = st.tabs(["🔐 INGRESAR", "🆘 RECUPERAR CLAVE"])
             with t_acc:
                 with st.form("main_login_form"):
@@ -713,7 +713,7 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                                 else:
                                     codigo = str(random.randint(100000, 999999)); st.session_state.update({'pwd_code': codigo, 'pwd_dni': r_dni})
                                     cuerpo = f"Hola {db_nom},\n\nTu código es: {codigo}\n\nIngrésalo en la plataforma para continuar."
-                                    exito, msg = enviar_correo_generico(db_cor, "Código de Verificación - Banquito El Pino Dorado", cuerpo)
+                                    exito, msg = enviar_correo_generico(db_cor, "Código de Verificación - Banco La Colmena del Perú", cuerpo)
                                     if exito: st.session_state.pwd_step = 2; st.rerun()
                                     else: st.error(msg)
                             else: st.error("Socio no encontrado.")
@@ -1051,7 +1051,7 @@ elif st.session_state.vista == 'secretario':
                     st.info("📜 Constancia Financiera")
                     if not db_query("SELECT id FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (cdni,)):
                         if st.button("GENERAR CONSTANCIA DE NO ADEUDO", use_container_width=True): st.download_button("📥 DESCARGAR CONSTANCIA PDF", generar_pdf_constancia("No Adeudo", nom_comp, cdni), f"Constancia_No_Adeudo_{cdni}.pdf", type="primary", use_container_width=True)
-                    else: st.error("El socio tiene deudas activas en el Banquito. NO es posible emitir Constancia de No Adeudo.")
+                    else: st.error("El socio tiene deudas activas en La Colmena. NO es posible emitir Constancia de No Adeudo.")
 
     elif m == "📢 COMUNICADOS":
         st.write("El texto que escribas aquí se añadirá al Muro de Avisos del portal de los socios.")
@@ -1184,11 +1184,11 @@ elif st.session_state.vista == 'tesorero':
                                     if ce_int > 0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Interés por Compra Extra - {nombre_fmt} ({ce_acc} acc)", ce_int, fh), fetch=False)
                                     if ce_ins > 0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Derecho Inscripción Extra - {nombre_fmt} ({ce_acc} acc)", ce_ins, fh), fetch=False)
                                     
-                                    txt_v = f"======================================\n      BANQUITO EL PINO DORADO\n      COMPRA DE ACCION EXTRA\n======================================\nFecha: {format_fecha(fh)}\nSocio: {nom} {ape}\nDNI:   {dni_busq}\n--------------------------------------\n"
+                                    txt_v = f"======================================\n      BANCO LA COLMENA DEL PERÚ\n      COMPRA DE ACCION EXTRA\n======================================\nFecha: {format_fecha(fh)}\nSocio: {nom} {ape}\nDNI:   {dni_busq}\n--------------------------------------\n"
                                     txt_v += f"Acciones Compradas : {ce_acc}\nAportes Nivelacion : S/ {f_m(ce_cap)}\nInteres Nivelacion : S/ {f_m(ce_int)}\nInscripcion        : S/ {f_m(ce_ins)}\n--------------------------------------\nTOTAL INGRESADO    : S/ {f_m(ce_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
                                     
                                     st.session_state.ce_pdf_bytes = generar_pdf_voucher(txt_v, dni_busq)
-                                    exito, st.session_state.ce_msg_correo = enviar_correo_generico(cor, "Voucher Compra Acción Extra - Banquito El Pino Dorado", f"Estimado/a {nom} {ape},\n\nAdjuntamos su comprobante de compra de acciones extra.\n\nAtentamente,\nBanquito El Pino Dorado.", st.session_state.ce_pdf_bytes, f"Voucher_Extra_{dni_busq}.pdf")
+                                    exito, st.session_state.ce_msg_correo = enviar_correo_generico(cor, "Voucher Compra Acción Extra - Banco La Colmena del Perú", f"Estimado/a {nom} {ape},\n\nAdjuntamos su comprobante de compra de acciones extra.\n\nAtentamente,\nBanco La Colmena del Perú.", st.session_state.ce_pdf_bytes, f"Voucher_Extra_{dni_busq}.pdf")
                                     st.session_state.ce_done = True; st.rerun()
                 else: st.error("Socio no encontrado en el sistema.")
                 
@@ -1224,7 +1224,7 @@ elif st.session_state.vista == 'tesorero':
                     
                     if saldo_a_devolver >= 0:
                         c_l4.metric("Saldo Neto a Entregar", f"S/ {f_m(saldo_a_devolver)}")
-                        st.success(f"El Banquito debe devolverle S/ {f_m(saldo_a_devolver)} al socio de la Caja Principal.")
+                        st.success(f"La Colmena debe devolverle S/ {f_m(saldo_a_devolver)} al socio de la Caja Principal.")
                     else:
                         c_l4.metric("Deuda del Socio a Caja", f"S/ {f_m(abs(saldo_a_devolver))}")
                         st.error(f"¡CUIDADO! El socio debe S/ {f_m(abs(saldo_a_devolver))} más de lo que tiene ahorrado. Debe pagar en efectivo antes de retirarse.")
@@ -1341,7 +1341,7 @@ elif st.session_state.vista == 'tesorero':
                         if st.session_state.get('pu_show_voucher', False) and not st.session_state.get('pu_done', False):
                             st.markdown("### 🧾 Vista Previa del Voucher")
                             fh_pre = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            txt_v = f"======================================\n      BANQUITO EL PINO DORADO\n      COMPROBANTE DE PAGO\n======================================\nFecha: {format_fecha(fh_pre)}\nSocio: {n} {a}\nDNI:   {pdni}\n--------------------------------------\n"
+                            txt_v = f"======================================\n      BANCO LA COLMENA DEL PERÚ\n      COMPROBANTE DE PAGO\n======================================\nFecha: {format_fecha(fh_pre)}\nSocio: {n} {a}\nDNI:   {pdni}\n--------------------------------------\n"
                             if st.session_state.pu_tot_ap > 0: txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :            S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
                             if st.session_state.pu_tot_cap > 0 or st.session_state.pu_tot_int > 0: txt_v += "PAGO DE PRESTAMOS:\n" + "".join([f" - Accion {pr['acc']}:\n      Capital :         S/ {f_m(pr['cap'])}\n      Interes :         S/ {f_m(pr['int'])}\n      Saldo Cap. Act. : S/ {f_m(max(0.0, pr['saldo'] - pr['cap']))}\n" for pr in st.session_state.pu_det_pr]) + f"   Subtotal Prestamos : S/ {f_m(st.session_state.pu_tot_cap + st.session_state.pu_tot_int)}\n--------------------------------------\n"
                             if st.session_state.pu_tot_mul > 0: txt_v += "MULTAS:\n" + "".join([f" - {m_motivo[:20]:<20} : S/ {f_m(m_monto)}\n" for _, m_motivo, m_monto in st.session_state.pu_det_mul]) + f"   Subtotal Multas    : S/ {f_m(st.session_state.pu_tot_mul)}\n--------------------------------------\n"
@@ -1380,7 +1380,7 @@ elif st.session_state.vista == 'tesorero':
                                         for m_id in st.session_state.pu_ids_mul: db_query("UPDATE multas_pendientes SET estado='PAGADO' WHERE id=?", (m_id,), fetch=False)
 
                                     st.session_state.pu_pdf_bytes = generar_pdf_voucher(txt_v, pdni)
-                                    exito, st.session_state.pu_msg_correo = enviar_correo_generico(correo, "Voucher de Pago - Banquito El Pino Dorado", f"Estimado/a {n} {a},\n\nAdjuntamos su comprobante de pago de la fecha.\n\nAtentamente,\nBanquito El Pino Dorado.", st.session_state.pu_pdf_bytes, f"Voucher_Pago_{pdni}.pdf")
+                                    exito, st.session_state.pu_msg_correo = enviar_correo_generico(correo, "Voucher de Pago - Banco La Colmena del Perú", f"Estimado/a {n} {a},\n\nAdjuntamos su comprobante de pago de la fecha.\n\nAtentamente,\nBanco La Colmena del Perú.", st.session_state.pu_pdf_bytes, f"Voucher_Pago_{pdni}.pdf")
                                     st.session_state.update({'pu_done': True, 'pu_auth_success': False}); st.rerun()
                     else: st.error("Socio no encontrado.")
 
@@ -1478,7 +1478,7 @@ elif st.session_state.vista == 'tesorero':
                                                 i = math.ceil(sp * tasa); cuotas.append((f"Cuota {num_c}", f"{['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][m-1]} {a}", am, i, am+i)); tot_i += i; sp -= am; num_c += 1
                                                 
                                             st.session_state.pres_pdf = generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, True)
-                                            exito, st.session_state.pres_msg_correo = enviar_correo_generico(item['correo'], "Cronograma de Préstamo - Banquito El Pino Dorado", f"Estimado/a {item['socio']},\n\nSu préstamo ha sido aprobado exitosamente. Adjuntamos su nuevo cronograma de pagos.\n\nAtentamente,\nLa Junta Directiva.", generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, False), f"Cronograma_{pdni2}.pdf")
+                                            exito, st.session_state.pres_msg_correo = enviar_correo_generico(item['correo'], "Cronograma de Préstamo - Banco La Colmena del Perú", f"Estimado/a {item['socio']},\n\nSu préstamo ha sido aprobado exitosamente. Adjuntamos su nuevo cronograma de pagos.\n\nAtentamente,\nLa Junta Directiva.", generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, False), f"Cronograma_{pdni2}.pdf")
                                             st.session_state.update({'pres_dni': pdni2, 'pres_done': True}); st.rerun()
                                             
                                         if cb2.button("❌ ANULAR", key=f"anular_{item['id']}", use_container_width=True): db_query("UPDATE solicitudes_prestamo SET estado='RECHAZADO' WHERE id=?", (item['id'],), fetch=False); st.rerun()
@@ -1507,7 +1507,7 @@ elif st.session_state.vista == 'tesorero':
                                                 i = math.ceil(sp * tasa); cuotas.append((f"Cuota {num_c}", f"{['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][m-1]} {a}", am, i, am+i)); tot_i += i; sp -= am; num_c += 1
                                                 
                                             st.session_state.pres_pdf = generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, True)
-                                            exito, st.session_state.pres_msg_correo = enviar_correo_generico(item['correo'], "Voucher y Cronograma de Préstamo - Banquito El Pino Dorado", f"Estimado/a {item['socio']},\n\nSu préstamo parcial ha sido aprobado exitosamente. Adjuntamos el voucher y su nuevo cronograma de pagos.\n\nAtentamente,\nLa Junta Directiva.", generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, False), f"Prestamo_{pdni2}.pdf")
+                                            exito, st.session_state.pres_msg_correo = enviar_correo_generico(item['correo'], "Voucher y Cronograma de Préstamo - Banco La Colmena del Perú", f"Estimado/a {item['socio']},\n\nSu préstamo parcial ha sido aprobado exitosamente. Adjuntamos el voucher y su nuevo cronograma de pagos.\n\nAtentamente,\nLa Junta Directiva.", generar_pdf_desembolso(item['socio'], pdni2, acc_n, m_p, m_proy, tot_i, cuotas, fh_exacta, tasa, False), f"Prestamo_{pdni2}.pdf")
                                             st.session_state.update({'pres_dni': pdni2, 'pres_done': True}); st.rerun()
                                             
                                         if cb2.button("❌ ANULAR", key=f"anular_parc_{item['id']}", use_container_width=True): db_query("UPDATE solicitudes_prestamo SET estado='RECHAZADO' WHERE id=?", (item['id'],), fetch=False); st.rerun()
@@ -1552,7 +1552,7 @@ elif st.session_state.vista == 'tesorero':
         cp3.metric("3️⃣ Capital Estimado", f"S/ {f_m(proy_capital)}", "Amortización mínima")
         cp4.metric("✨ FONDOS PROYECTADOS", f"S/ {f_m(c_prin + proy_aportes + proy_interes + proy_capital)}", "Disponible para prestar")
         
-        st.divider(); st.subheader("📊 Resumen General del Banquito")
+        st.divider(); st.subheader("📊 Resumen General de La Colmena")
         tot_int_disponible = max(0.0, float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%nter%' AND tipo NOT LIKE '%Caja Chica%'")[0][0] or 0.0) + float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Pago Directiva%' OR tipo LIKE 'Pago Utilidades%' OR tipo LIKE 'Ajuste Interno - Salida de Utilidades%'")[0][0] or 0.0))
         tot_ins = float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Inscripc%'")[0][0] or 0.0)
         tot_aportes = float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%'")[0][0] or 0.0)
