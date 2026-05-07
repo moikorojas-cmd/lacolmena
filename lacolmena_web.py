@@ -219,12 +219,13 @@ def obtener_estado_cumpleanos():
 # 3. LÓGICA DE PDFS
 # =============================================================================
 def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
+    hoy_peru = datetime.now() - timedelta(hours=5)
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - REPORTE DE CAJA", ln=True, align='C'); pdf.set_font("Courier", size=10)
     pdf.cell(0, 6, f"Rango de fechas: {format_fecha(str(f_ini))} al {format_fecha(str(f_fin))}", ln=True)
     if dni_filtro: pdf.cell(0, 6, f"Filtro aplicado (DNI/Nombre): {dni_filtro}", ln=True)
-    pdf.cell(0, 6, f"Fecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", ln=True); pdf.ln(5)
+    pdf.cell(0, 6, f"Fecha de reporte: {hoy_peru.strftime('%d/%m/%Y %H:%M:%S')}", ln=True); pdf.ln(5)
     pdf.set_font("Courier", 'B', 9); pdf.cell(35, 6, "FECHA", border=1, align='C'); pdf.cell(125, 6, "DETALLE DE OPERACION", border=1, align='C'); pdf.cell(30, 6, "MONTO (S/)", border=1, align='C'); pdf.ln()
     pdf.set_font("Courier", '', 8)
     t_ing, t_egr = 0.0, 0.0
@@ -243,16 +244,24 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
     tasa, m_min = get_config("interes_prestamo", 0.0) / 100.0, get_config("monto_minimo_capital", 50.0)
     res_p = db_query("SELECT saldo_actual FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (dni, acc_num))
     saldo_hoy = res_p[0][0] if res_p else 0.0
-    filtro = f"%{dni}%(Acción {acc_num})%"
+    
+    # CORRECCIÓN 1: Buscar tanto por DNI como por Nombre para no perder el pago de Mayo
+    nombre_fmt = f"{nombre_completo.split()[0]} {nombre_completo.split()[1] if len(nombre_completo.split()) > 1 else ''}".strip()
+    filtro_acc = f"%(Acción {acc_num})%"
+    
     if f_inicio and f_fin:
-        movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE tipo LIKE ? AND date(fecha) >= ? AND date(fecha) <= ? ORDER BY fecha ASC", (filtro, f_inicio, f_fin))
+        movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE (tipo LIKE ? OR tipo LIKE ?) AND tipo LIKE ? AND date(fecha) >= ? AND date(fecha) <= ? ORDER BY fecha ASC", (f"%{dni}%", f"%{nombre_fmt}%", filtro_acc, f_inicio, f_fin))
         rango_str = f"Rango: {format_fecha(str(f_inicio))} al {format_fecha(str(f_fin))}"
     else:
-        movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE tipo LIKE ? ORDER BY fecha ASC", (filtro,))
+        movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE (tipo LIKE ? OR tipo LIKE ?) AND tipo LIKE ? ORDER BY fecha ASC", (f"%{dni}%", f"%{nombre_fmt}%", filtro_acc))
         rango_str = "Rango: Histórico Completo"
+        
+    # CORRECCIÓN 2: Ajuste estricto a la hora de Perú (UTC-5)
+    hoy_peru = datetime.now() - timedelta(hours=5)
+    
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=9)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
-    header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANCO LA COLMENA DEL PERÚ 🐝\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
+    header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANCO LA COLMENA DEL PERÚ 🐝\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {hoy_peru.strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     reporte_texto, saldo_acumulado, historial_agrupado = header, 0.0, {}
     for m in movs:
         f, t, mon = m[0], m[1], m[2]; f_dia = f[:10] 
@@ -391,10 +400,11 @@ def generar_pdf_acta_cierre(anio):
     os.remove(f_n); return b
 
 def generar_pdf_acta_liquidacion(nombre, dni, aportes, deudas, multas, neto):
+    hoy_peru = datetime.now() - timedelta(hours=5)
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - ACTA DE LIQUIDACION Y RETIRO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
-    texto = f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\nSocio: {nombre}\nDNI:   {dni}\n" + "-"*60 + "\n"
+    texto = f"Fecha: {hoy_peru.strftime('%d/%m/%Y %H:%M:%S')}\nSocio: {nombre}\nDNI:   {dni}\n" + "-"*60 + "\n"
     texto += f"1. Total Capital Aportado :  S/ {aportes:.2f}\n2. Deudas por Prestamos   : -S/ {deudas:.2f}\n3. Multas Pendientes      : -S/ {multas:.2f}\n" + "-"*60 + "\n"
     if neto >= 0: texto += f"SALDO NETO A DEVOLVER AL SOCIO : S/ {neto:.2f}\n" + "-"*60 + "\n\n"
     else: texto += f"DEUDA PENDIENTE DEL SOCIO A CAJA: S/ {abs(neto):.2f}\n" + "-"*60 + "\n\n"
