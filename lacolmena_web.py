@@ -211,7 +211,7 @@ def obtener_estado_cumpleanos():
                 dt_nac = datetime.strptime(fnac, "%Y-%m-%d")
                 edad_cumple = anio_act - dt_nac.year
                 if edad_cumple < 0: edad_cumple = 0
-                nombre_fmt, estado, fecha_entrega = f"{s_nom.split()[0]} {s_ape.split()[0]}", "PENDIENTE", "---"
+                nombre_fmt, estado, fecha_entrega = f"{s_nom.split()[0]} {s_ape.split()[0]} ({s_dni})", "PENDIENTE", "---"
                 entrega_bd = db_query("SELECT fecha FROM movimientos WHERE tipo LIKE ? AND monto < 0", (f"Entrega de Pozo Cumpleaños - {nombre_fmt} ({anio_act})%",))
                 if entrega_bd: estado, fecha_entrega = "ENTREGADO", format_fecha(entrega_bd[0][0])
                 elif dt_nac.month == mes_act: estado = "EN RECAUDACIÓN"
@@ -564,7 +564,7 @@ def ui_cumpleanos_admin(es_tesorero=False):
     for d, n, a, fnac in cumpleaneros:
         if fnac:
             try:
-                if datetime.strptime(fnac, "%Y-%m-%d").month == mes_act: cumplen_este_mes.append({"dni": d, "nom": f"{n.split()[0]} {a.split()[0]}", "dia": datetime.strptime(fnac, "%Y-%m-%d").day})
+                if datetime.strptime(fnac, "%Y-%m-%d").month == mes_act: cumplen_este_mes.append({"dni": d, "nom": f"{n.split()[0]} {a.split()[0]} ({d})", "dia": datetime.strptime(fnac, "%Y-%m-%d").day})
             except: pass
     
     cuota_c = get_config("cuota_cumpleanos", 0.0)
@@ -759,7 +759,7 @@ elif st.session_state.socio_logged_in:
     if get_config("jugar_cumpleanos", "SI", str) == "SI":
         mes_actual, dia_actual = ahora().month, ahora().day
         cumpleaneros = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
-        cumplen_este_mes_alerta = [{"dni": d, "nom": f"{n.split()[0]} {a.split()[0]}", "dia": datetime.strptime(fnac, "%Y-%m-%d").day} for d, n, a, fnac in cumpleaneros if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
+        cumplen_este_mes_alerta = [{"dni": d, "nom": f"{n.split()[0]} {a.split()[0]} ({d})", "dia": datetime.strptime(fnac, "%Y-%m-%d").day} for d, n, a, fnac in cumpleaneros if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
         
         if cumplen_este_mes_alerta:
             cumplen_este_mes_alerta.sort(key=lambda x: x["dia"])
@@ -975,7 +975,7 @@ elif st.session_state.vista == 'superadmin':
 elif st.session_state.vista == 'secretario':
     render_top_header()
     mes_actual, dia_actual = ahora().month, ahora().day
-    cumplen_este_mes_alerta = [f"{n.split()[0]} {a.split()[0]}" for n, a, fnac in db_query("SELECT nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0") if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
+    cumplen_este_mes_alerta = [f"{n.split()[0]} {a.split()[0]} (DNI: {n_dni})" for n_dni, n, a, fnac in db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0") if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
     if cumplen_este_mes_alerta: st.info(f"🎂 **ALERTA DE CUMPLEAÑOS:** Próximos a cumplir años: **{', '.join(cumplen_este_mes_alerta)}**. " + ("Los socios ya fueron notificados para realizar el abono." if get_config("jugar_cumpleanos", "SI", str) == "SI" else "Recuerde coordinar el presente institucional."))
     
     m = st.radio("MENÚ PRINCIPAL:", ["📅 AGENDAR REUNIÓN", "✏️ ACTUALIZAR SOCIOS", "📥 MESA DE PARTES", "📜 CONSTANCIAS", "📢 COMUNICADOS", "🙋 ASISTENCIA", "🎂 CUMPLEAÑOS", "🗳️ VOTACIONES"], horizontal=True)
