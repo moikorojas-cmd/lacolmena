@@ -687,10 +687,15 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                         res_dir = db_query("SELECT id, nombre, rol FROM usuarios WHERE usuario=? AND password=?", (input_user, input_pass))
                         if res_dir:
                             u_id, u_nom, u_rol = res_dir[0]
-                            if u_rol == 'tesorero' and get_config("proxima_reunion", "2000-01-01", str) != datetime.now().strftime("%Y-%m-%d"):
+                                
+                            # Obtenemos la fecha actual ajustada a UTC-5
+                            hoy_peru = (datetime.now() - timedelta(hours=5)).strftime("%Y-%m-%d")
+                                
+                            if u_rol == 'tesorero' and get_config("proxima_reunion", "2000-01-01", str) != hoy_peru:
                                 st.session_state.tesorero_bloqueado, st.session_state.tesorero_id_temp = True, (u_id, u_rol, u_nom)
                                 enviar_alerta_correo(u_nom); st.rerun()
-                            else: st.session_state.update({'usuario_id': u_id, 'usuario_rol': u_rol, 'usuario_nombre': u_nom, 'vista': u_rol}); st.rerun()
+                            else: 
+                                st.session_state.update({'usuario_id': u_id, 'usuario_rol': u_rol, 'usuario_nombre': u_nom, 'vista': u_rol}); st.rerun()
                         else:
                             res_soc = db_query("SELECT nombres, apellidos, password FROM socios WHERE dni=?", (input_user,))
                             if res_soc:
