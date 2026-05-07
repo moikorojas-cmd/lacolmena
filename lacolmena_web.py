@@ -1095,7 +1095,11 @@ elif st.session_state.vista == 'tesorero':
                     c1, c2, c3 = st.columns(3)
                     c1.write(f"**DNI:** {dni_busq}\n\n**Teléfono:** {tel or '---'}\n\n**Correo:** {cor or '---'}")
                     c2.write(f"**Dirección:** {dir_ or '---'}\n\n**Sexo:** {sex or '---'}\n\n**Fecha Ingreso:** {format_fecha(fing)}")
-                    tot_ah = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{dni_busq}%",))[0][0] or 0.0
+                    
+                    # CORRECCIÓN: Ahora el Tesorero también busca los aportes por DNI y por Nombre corto
+                    nombre_fmt_busq = f"{nom.split()[0]} {ape.split()[0] if ape else ''}".strip()
+                    tot_ah = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{dni_busq}%", f"%{nombre_fmt_busq}%"))[0][0] or 0.0
+                    
                     c3.metric("Acciones Activas", acc_act)
                     c3.info(f"💰 **Total Ahorrado:** S/ {f_m(tot_ah)}")
                     
