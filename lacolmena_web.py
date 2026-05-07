@@ -30,6 +30,10 @@ except ImportError:
 # =============================================================================
 st.set_page_config(page_title="Banco La Colmena", page_icon="🐝", layout="wide", initial_sidebar_state="collapsed")
 
+# 🕒 RELOJ MAESTRO DEL SISTEMA (Fuerza la hora de Perú UTC-5 en todo el código)
+def ahora():
+    return datetime.utcnow() - timedelta(hours=5)
+
 def f_m(valor):
     if valor is None: return "0.00"
     return "{:,.2f}".format(float(valor))
@@ -139,7 +143,7 @@ def enviar_alerta_correo(usuario_intruso):
     correo_presi = get_config("correo_presidente", "", str)
     st.toast(f"📧 ALERTA ENVIADA AL CORREO DEL PRESIDENTE: Intento de acceso a la bóveda.", icon="🚨")
     if correo_presi:
-        cuerpo = f"🚨 ALERTA DE SEGURIDAD 🚨\n\nEl usuario '{usuario_intruso}' acaba de intentar acceder a la bóveda del sistema fuera de la fecha agendada.\n\nFecha y Hora del intento: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+        cuerpo = f"🚨 ALERTA DE SEGURIDAD 🚨\n\nEl usuario '{usuario_intruso}' acaba de intentar acceder a la bóveda del sistema fuera de la fecha agendada.\n\nFecha y Hora del intento: {ahora().strftime('%d/%m/%Y %H:%M:%S')}"
         enviar_correo_generico(correo_presi, "🚨 ALERTA DE SEGURIDAD - Banco La Colmena del Perú", cuerpo)
 
 def format_fecha(fecha_str):
@@ -161,12 +165,12 @@ def truncar_a_un_decimal(numero): return math.floor(numero * 10) / 10.0
 
 def calcular_nivelacion_por_accion():
     # 1. Configuración de tiempos y reglas
-    f_fundacion_str = get_config("fecha_fundacion", datetime.now().strftime("%Y-%m-%d"), str)
+    f_fundacion_str = get_config("fecha_fundacion", ahora().strftime("%Y-%m-%d"), str)
     try: f_fundacion = datetime.strptime(f_fundacion_str[:10], "%Y-%m-%d")
-    except: f_fundacion = datetime.now()
+    except: f_fundacion = ahora()
     
     # Aseguramos la hora de Perú para no saltar de mes accidentalmente
-    hoy = datetime.now() - timedelta(hours=5) 
+    hoy = ahora() 
     
     cuota_actual = get_config("aporte_mensual", 0.0)
     tasa = get_config("interes_prestamo", 0.0) / 100.0
@@ -197,7 +201,7 @@ def calcular_nivelacion_por_accion():
     return float(cap_esperado), float(int_esperado)
 
 def obtener_estado_cumpleanos():
-    anio_act, mes_act = datetime.now().year, datetime.now().month
+    anio_act, mes_act = ahora().year, ahora().month
     meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     socios_c = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
     lista_cumples = []
@@ -219,7 +223,7 @@ def obtener_estado_cumpleanos():
 # 3. LÓGICA DE PDFS
 # =============================================================================
 def generar_pdf_historial_caja(movimientos_fmt, f_ini, f_fin, dni_filtro):
-    hoy_peru = datetime.now() - timedelta(hours=5)
+    hoy_peru = ahora()
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - REPORTE DE CAJA", ln=True, align='C'); pdf.set_font("Courier", size=10)
@@ -257,7 +261,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
         rango_str = "Rango: Histórico Completo"
         
     # CORRECCIÓN 2: Ajuste estricto a la hora de Perú (UTC-5)
-    hoy_peru = datetime.now() - timedelta(hours=5)
+    hoy_peru = ahora()
     
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=9)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
@@ -285,7 +289,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
                 saldo_acumulado -= d_mov['cap']; saldo_acumulado = 0.0 if saldo_acumulado < 0.01 else saldo_acumulado
                 reporte_texto += f"{f_display:<10} | {'PAGO CUOTA':<20} | {d_mov['cap']:>9.2f} | {d_mov['int']:>9.2f} | {d_mov['cap']+d_mov['int']:>9.2f} | {saldo_acumulado:>10.2f} C\n"
     reporte_texto += "\n\n⏩ PARTE 2: PROYECCIÓN DE PAGOS PENDIENTES (CRONOGRAMA ACTUALIZADO)\n" + "-"*85 + "\n" + f"{'NRO CUOTA':<10} | {'MES Y AÑO':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
-    sp, mes, anio, total_proyectado = saldo_hoy, datetime.now().month, datetime.now().year, 0.0
+    sp, mes, anio, total_proyectado = saldo_hoy, ahora().month, ahora().year, 0.0
     amort_pct_act, amort_pct_val = get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0) / 100.0
     res_orig = db_query("SELECT monto_original FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (dni, acc_num))
     d_orig = res_orig[0][0] if res_orig else 0.0
@@ -309,7 +313,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
     os.remove(f_n); return b
 
 def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, fh, tasa, incluir_contrato=True):
-    nom_presi, nom_teso, nom_secri, anio_actual = get_config("presidente", "No asignado", str), get_config("tesorero", "No asignado", str), get_config("secretario", "No asignado", str), datetime.now().year
+    nom_presi, nom_teso, nom_secri, anio_actual = get_config("presidente", "No asignado", str), get_config("tesorero", "No asignado", str), get_config("secretario", "No asignado", str), ahora().year
     pdf = FPDF(); fh_fmt = format_fecha(fh)
     pdf.add_page(); pdf.set_font("Courier", 'B', 14); pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - VOUCHER DE DESEMBOLSO", ln=True, align='C'); pdf.set_font("Courier", size=12); pdf.ln(5)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
@@ -357,7 +361,7 @@ def generar_pdf_constancia(tipo, socio_nom, dni):
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 15, "BANCO LA COLMENA DEL PERÚ", ln=True, align='C')
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, f"CONSTANCIA DE {tipo.upper()}", ln=True, align='C'); pdf.ln(10)
-    pdf.set_font("Arial", '', 12); fecha_hoy = datetime.now().strftime("%d de %B de %Y")
+    pdf.set_font("Arial", '', 12); fecha_hoy = ahora().strftime("%d de %B de %Y")
     if tipo == "Socio Activo": texto = f"La Junta Directiva del Banco La Colmena del Perú hace constar que el Sr(a). {socio_nom.upper()}, identificado con DNI {dni}, se encuentra registrado como SOCIO ACTIVO de nuestra institucion, cumpliendo con sus aportaciones a la fecha.\n\nSe expide el presente documento a solicitud del interesado para los fines que considere convenientes."
     else: texto = f"La Junta Directiva del Banco La Colmena del Perú certifica que el Sr(a). {socio_nom.upper()}, con DNI {dni}, NO MANTIENE DEUDAS PENDIENTES por concepto de prestamos en ninguna de sus acciones a la fecha de hoy.\n\nSe extiende la presente constancia para acreditar su solvencia interna dentro de la organizacion."
     pdf.multi_cell(0, 8, txt=texto.encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(30)
@@ -400,7 +404,7 @@ def generar_pdf_acta_cierre(anio):
     os.remove(f_n); return b
 
 def generar_pdf_acta_liquidacion(nombre, dni, aportes, deudas, multas, neto):
-    hoy_peru = datetime.now() - timedelta(hours=5)
+    hoy_peru = ahora()
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", 'B', 14)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     pdf.cell(0, 10, "BANCO LA COLMENA DEL PERÚ - ACTA DE LIQUIDACION Y RETIRO", ln=True, align='C'); pdf.set_font("Courier", size=10); pdf.ln(5)
@@ -504,7 +508,7 @@ def ui_votaciones_admin():
         v_ops = st.text_input("Opciones de respuesta separadas por coma:", value="SÍ, NO, ABSTENCIÓN")
         if st.button("🚀 PUBLICAR VOTACIÓN", type="primary"):
             if v_preg and v_ops:
-                db_query("INSERT INTO votaciones (pregunta, opciones, fecha_creacion) VALUES (?,?,?)", (v_preg, v_ops, datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
+                db_query("INSERT INTO votaciones (pregunta, opciones, fecha_creacion) VALUES (?,?,?)", (v_preg, v_ops, ahora().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
                 st.success("Votación creada y publicada con éxito. Los socios ya pueden votar.")
             else: st.warning("Completa la pregunta y las opciones.")
     with t_v2:
@@ -541,7 +545,7 @@ def ui_cumpleanos_admin(es_tesorero=False):
             st.dataframe(df_c.style.map(highlight_estado, subset=['Estado']), use_container_width=True)
         else: st.info("No hay fechas registradas.")
             
-    st.divider(); anio_act, mes_act = datetime.now().year, datetime.now().month
+    st.divider(); anio_act, mes_act = ahora().year, ahora().month
     meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     
     cumpleaneros = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
@@ -573,7 +577,7 @@ def ui_cumpleanos_admin(es_tesorero=False):
                     if st.checkbox(f"Cobrar a: {nombre_pagador}"): socios_a_pagar.append(s_p[0])
             if st.button("💾 REGISTRAR PAGO DE CUOTAS", type="primary"):
                 if socios_a_pagar:
-                    monto_ingreso_total = len(socios_a_pagar) * cuota_c; fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    monto_ingreso_total = len(socios_a_pagar) * cuota_c; fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                     db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (monto_ingreso_total,), fetch=False)
                     for sp_dni in socios_a_pagar: db_query("INSERT INTO cumpleanos_pagos (anio, mes, dni_cumpleanero, dni_aportante, monto, fecha_pago) VALUES (?,?,?,?,?,?)", (anio_act, mes_act, dni_f_real, sp_dni, cuota_c, fh), fetch=False)
                     db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Recaudación Cumpleaños - Para {dni_festejado}", monto_ingreso_total, fh), fetch=False)
@@ -589,7 +593,7 @@ def ui_cumpleanos_admin(es_tesorero=False):
             if ya_se_le_entrego: st.success("✅ El pozo ya fue entregado a este cumpleañero.")
             elif recaudado > 0:
                 if st.button(f"🎁 ENTREGAR POZO (S/ {f_m(recaudado)}) A {dni_festejado_pago}", type="primary"):
-                    fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                     db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (recaudado,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Entrega de Pozo Cumpleaños - {dni_festejado_pago} ({anio_act})", -recaudado, fh), fetch=False)
                     st.success("¡Dinero entregado y descontado de la Caja Principal!"); st.rerun()
             else: st.info("Aún no se ha recaudado dinero para este cumpleañero.")
@@ -602,7 +606,7 @@ def ui_registro_nuevo_socio():
         st.download_button("🖨️ DESCARGAR VOUCHER (IMPRIMIR Y FIRMAR)", data=st.session_state.ns_pdf_bytes, file_name=f"Voucher_Ingreso.pdf", mime="application/pdf", type="primary")
         if st.button("FINALIZAR Y LIMPIAR FORMULARIO"): limpiar_formularios_socio(); st.rerun()
     else:
-        rdni = st.text_input("DNI*", on_change=limpiar_formularios_socio); rnom = st.text_input("Nombres*"); rape = st.text_input("Apellidos"); rtel = st.text_input("Teléfono"); rdir = st.text_input("Dirección"); rcor = st.text_input("Correo"); rsex = st.selectbox("Sexo", ["Masculino", "Femenino"]); rnac = st.date_input("Fecha de Nacimiento", value=date(1990, 1, 1), min_value=date(1900, 1, 1), max_value=date.today()); racc = st.number_input("Acciones a Iniciar", 1, 4, 1)
+        rdni = st.text_input("DNI*", on_change=limpiar_formularios_socio); rnom = st.text_input("Nombres*"); rape = st.text_input("Apellidos"); rtel = st.text_input("Teléfono"); rdir = st.text_input("Dirección"); rcor = st.text_input("Correo"); rsex = st.selectbox("Sexo", ["Masculino", "Femenino"]); rnac = st.date_input("Fecha de Nacimiento", value=date(1990, 1, 1), min_value=date(1900, 1, 1), max_value=ahora().date()); racc = st.number_input("Acciones a Iniciar", 1, 4, 1)
         st.divider(); st.write("El sistema calcula automáticamente la nivelación correspondiente al día de hoy:")
         c_hist, i_hist = calcular_nivelacion_por_accion()
         ins_b = get_config("cuota_inscripcion", 0.0)
@@ -616,9 +620,9 @@ def ui_registro_nuevo_socio():
             else:
                 if db_query("SELECT id FROM socios WHERE dni=?", (rdni,)): st.error("Error: Este DNI ya está registrado.")
                 else:
-                    db_query("INSERT INTO socios (dni, nombres, apellidos, telefono, direccion, correo, sexo, fecha_nacimiento, acciones, fecha_ingreso) VALUES (?,?,?,?,?,?,?,?,?,?)", (rdni, rnom, rape, rtel, rdir, rcor, rsex, str(rnac), racc, datetime.now().strftime("%Y-%m-%d")), fetch=False)
+                    db_query("INSERT INTO socios (dni, nombres, apellidos, telefono, direccion, correo, sexo, fecha_nacimiento, acciones, fecha_ingreso) VALUES (?,?,?,?,?,?,?,?,?,?)", (rdni, rnom, rape, rtel, rdir, rcor, rsex, str(rnac), racc, ahora().strftime("%Y-%m-%d")), fetch=False)
                     db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (t_tot,), fetch=False)
-                    fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                     nombre_fmt = f"{rnom.split()[0]} {rape.split()[0]}"
                     if t_cap>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Aporte Inicial - {nombre_fmt} ({racc} acc)", t_cap, fh), fetch=False)
                     if t_int>0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Interés Inicial - {nombre_fmt} ({racc} acc)", t_int, fh), fetch=False)
@@ -676,7 +680,7 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                             u_id, u_nom, u_rol = res_dir[0]
                                 
                             # Obtenemos la fecha actual ajustada a UTC-5
-                            hoy_peru = (datetime.now() - timedelta(hours=5)).strftime("%Y-%m-%d")
+                            hoy_peru = ahora().strftime("%Y-%m-%d")
                                 
                             if u_rol == 'tesorero' and get_config("proxima_reunion", "2000-01-01", str) != hoy_peru:
                                 st.session_state.tesorero_bloqueado, st.session_state.tesorero_id_temp = True, (u_id, u_rol, u_nom)
@@ -695,7 +699,7 @@ if not st.session_state.usuario_id and not st.session_state.socio_logged_in:
                 if st.session_state.pwd_step == 1:
                     st.write("Te enviaremos un código secreto a tu correo registrado.")
                     with st.form("form_req_code"):
-                        r_dni, r_nac = st.text_input("DNI:"), st.date_input("Fecha de Nacimiento:", value=date(1990,1,1), min_value=date(1900,1,1), max_value=date.today())
+                        r_dni, r_nac = st.text_input("DNI:"), st.date_input("Fecha de Nacimiento:", value=date(1990,1,1), min_value=date(1900,1,1), max_value=ahora().date())
                         if st.form_submit_button("ENVIAR CÓDIGO", type="primary", use_container_width=True):
                             s = db_query("SELECT fecha_nacimiento, password, correo, nombres FROM socios WHERE dni=?", (r_dni,))
                             if s:
@@ -734,7 +738,7 @@ elif st.session_state.socio_logged_in:
     
     st.write(f"**ACCIONES ACTIVAS:** {acc_socio}")
     f_reu_dt = datetime.strptime(get_config("proxima_reunion", "2000-01-01", str), "%Y-%m-%d").date() if get_config("proxima_reunion", "2000-01-01", str) != "2000-01-01" else date(2000, 1, 1)
-    if f_reu_dt > date(2000, 1, 1) and date.today() <= f_reu_dt:
+    if f_reu_dt > date(2000, 1, 1) and ahora().date() <= f_reu_dt:
         h_format = get_config("proxima_reunion_hora", "16:00", str)
         try: h_format = datetime.strptime(h_format, '%H:%M').strftime('%I:%M %p')
         except: pass
@@ -742,7 +746,7 @@ elif st.session_state.socio_logged_in:
 
     a_pagar_cumple, cuota_c = 0.0, get_config("cuota_cumpleanos", 0.0)
     if get_config("jugar_cumpleanos", "SI", str) == "SI":
-        mes_actual, dia_actual = datetime.now().month, datetime.now().day
+        mes_actual, dia_actual = ahora().month, ahora().day
         cumpleaneros = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
         cumplen_este_mes_alerta = [{"dni": d, "nom": f"{n.split()[0]} {a.split()[0]}", "dia": datetime.strptime(fnac, "%Y-%m-%d").day} for d, n, a, fnac in cumpleaneros if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
         
@@ -761,7 +765,8 @@ elif st.session_state.socio_logged_in:
     menu_s = st.radio("MENÚ DEL SOCIO:", ["📊 RESUMEN Y PRÉSTAMOS", "📅 HISTORIAL DE PAGOS", "📥 MESA DE PARTES", "🤝 SIM. DE PRÉSTAMOS", "📈 SIM. DE INVERSIÓN", "🗳️ VOTO VIRTUAL"], horizontal=True)
     
     if menu_s == "📊 RESUMEN Y PRÉSTAMOS":
-        tot_ah = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{s_dni}%",))[0][0] or 0.0
+        nombre_fmt = f"{soc_data[0][0].split()[0]} {soc_data[0][1].split()[0] if soc_data[0][1] else ''}".strip()
+        tot_ah = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{s_dni}%", f"%{nombre_fmt}%"))[0][0] or 0.0
         total_prestamos_prox = 0.0
         tasa, amort_pct_act, amort_pct_val, m_min_fijo = get_config("interes_prestamo", 0.0)/100.0, get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0)/100.0, get_config("monto_minimo_capital", 0.0)
         
@@ -769,7 +774,7 @@ elif st.session_state.socio_logged_in:
         if deudas:
             for d in deudas:
                 d_saldo, d_orig, d_conteo = d[2], d[3], d[4]
-                min_req = min(float(math.ceil(d_orig * amort_pct_val)), d_saldo) if amort_pct_act == "SI" and (d_conteo >= 3 or datetime.now().month > int(get_config("mes_limite_minimos", 12))) else min(m_min_fijo, d_saldo)
+                min_req = min(float(math.ceil(d_orig * amort_pct_val)), d_saldo) if amort_pct_act == "SI" and (d_conteo >= 3 or ahora().month > int(get_config("mes_limite_minimos", 12))) else min(m_min_fijo, d_saldo)
                 total_prestamos_prox += (min_req + float(math.ceil(d_saldo * tasa)))
                 
         cm1, cm2, cm3 = st.columns(3)
@@ -786,7 +791,7 @@ elif st.session_state.socio_logged_in:
             
     elif menu_s == "📅 HISTORIAL DE PAGOS":
         st.subheader("📅 HISTORIAL DE PAGOS Y APORTES")
-        cf1, cf2 = st.columns(2); f_ini, f_fin = cf1.date_input("Desde:", value=date(date.today().year, 1, 1)), cf2.date_input("Hasta:", value=date.today())
+        cf1, cf2 = st.columns(2); f_ini, f_fin = cf1.date_input("Desde:", value=date(ahora().year, 1, 1)), cf2.date_input("Hasta:", value=ahora().date())
         if st.button("BUSCAR MOVIMIENTOS", type="primary"):
             nom_fmt = f"{soc_data[0][0].split()[0]} {soc_data[0][1].split()[0] if soc_data[0][1] else ''}".strip()
             historial_soc = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE (tipo LIKE ? OR tipo LIKE ?) AND date(fecha) >= ? AND date(fecha) <= ? ORDER BY fecha DESC", (f"%{s_dni}%", f"%{nom_fmt}%", str(f_ini), str(f_fin)))
@@ -843,7 +848,7 @@ elif st.session_state.socio_logged_in:
             tot_hoy = t_cap + t_int + t_ins
             nuevo_c_hist = c_hist + get_config("aporte_mensual", 0.0)
             
-            m_actual_idx = datetime.now().month - 1
+            m_actual_idx = ahora().month - 1
             if m_actual_idx == 11: # Si estamos en Diciembre, el próximo mes es Enero y el interés se reinicia a 0
                 t_int_prox = 0.0
             else:
@@ -894,9 +899,9 @@ elif st.session_state.vista == 'superadmin':
 
     if menu_t == "📝 REGISTRAR SOCIOS": ui_registro_nuevo_socio()
     elif menu_t == "⚙️ ASIGNAR JUNTA DIRECTIVA":
-        ffun_str = get_config("fecha_fundacion", datetime.now().strftime("%Y-%m-%d"), str)
+        ffun_str = get_config("fecha_fundacion", ahora().strftime("%Y-%m-%d"), str)
         try: ffun_date = datetime.strptime(ffun_str, "%Y-%m-%d").date()
-        except: ffun_date = date.today()
+        except: ffun_date = ahora().date()
         ffun = st.date_input("Fecha de Fundación", value=ffun_date)
         lista_socios_db = db_query("SELECT nombres, apellidos, correo FROM socios ORDER BY nombres ASC")
         opciones_socios = ["No asignado"] + [f"{r[0]} {r[1]}".strip() for r in lista_socios_db]
@@ -958,7 +963,7 @@ elif st.session_state.vista == 'superadmin':
 
 elif st.session_state.vista == 'secretario':
     render_top_header()
-    mes_actual, dia_actual = datetime.now().month, datetime.now().day
+    mes_actual, dia_actual = ahora().month, ahora().day
     cumplen_este_mes_alerta = [f"{n.split()[0]} {a.split()[0]}" for n, a, fnac in db_query("SELECT nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0") if fnac and datetime.strptime(fnac, "%Y-%m-%d").month == mes_actual and dia_actual <= datetime.strptime(fnac, "%Y-%m-%d").day + 1]
     if cumplen_este_mes_alerta: st.info(f"🎂 **ALERTA DE CUMPLEAÑOS:** Próximos a cumplir años: **{', '.join(cumplen_este_mes_alerta)}**. " + ("Los socios ya fueron notificados para realizar el abono." if get_config("jugar_cumpleanos", "SI", str) == "SI" else "Recuerde coordinar el presente institucional."))
     
@@ -967,8 +972,8 @@ elif st.session_state.vista == 'secretario':
     if m == "📅 AGENDAR REUNIÓN":
         st.write("El Tesorero SOLO podrá iniciar sesión para cobrar o prestar dinero en la fecha seleccionada. Además, se agregará un aviso automático al historial del portal de socios.")
         try: f_obj = datetime.strptime(get_config("proxima_reunion", "2000-01-01", str), "%Y-%m-%d").date()
-        except: f_obj = datetime.now().date()
-        if getattr(f_obj, 'year', 2000) == 2000: f_obj = datetime.now().date()
+        except: f_obj = ahora().date()
+        if getattr(f_obj, 'year', 2000) == 2000: f_obj = ahora().date()
         try: h_obj = datetime.strptime(get_config("proxima_reunion_hora", "16:00", str), "%H:%M").time()
         except: h_obj = datetime.strptime("16:00", "%H:%M").time()
         
@@ -978,7 +983,7 @@ elif st.session_state.vista == 'secretario':
         if st.button("💾 GUARDAR FECHA Y PUBLICAR AVISO", type="primary"):
             db_query("UPDATE configuracion SET valor=? WHERE clave='proxima_reunion'", (str(nueva_fecha),), fetch=False)
             db_query("UPDATE configuracion SET valor=? WHERE clave='proxima_reunion_hora'", (nueva_hora.strftime("%H:%M"),), fetch=False)
-            db_query("INSERT INTO comunicados (mensaje, fecha) VALUES (?,?)", (f"Se ha agendado la próxima asamblea general y apertura de caja para el día {format_fecha(str(nueva_fecha))} a las {nueva_hora.strftime('%I:%M %p')}.", datetime.now().strftime("%d/%m/%Y %I:%M %p")), fetch=False)
+            db_query("INSERT INTO comunicados (mensaje, fecha) VALUES (?,?)", (f"Se ha agendado la próxima asamblea general y apertura de caja para el día {format_fecha(str(nueva_fecha))} a las {nueva_hora.strftime('%I:%M %p')}.", ahora().strftime("%d/%m/%Y %I:%M %p")), fetch=False)
             st.success(f"✅ Bóveda programada para el {format_fecha(str(nueva_fecha))}. El aviso oficial se ha agregado al historial de los socios.")
 
     elif m == "✏️ ACTUALIZAR SOCIOS":
@@ -996,7 +1001,7 @@ elif st.session_state.vista == 'secretario':
                     unom, uape = c1.text_input("Nombres", value=nom), c2.text_input("Apellidos", value=ape)
                     utel, udir = c1.text_input("Teléfono", value=tel if tel else ""), c2.text_input("Dirección", value=dir_ if dir_ else "")
                     ucor, usex = c1.text_input("Correo", value=cor if cor else ""), c2.selectbox("Sexo", ["Masculino", "Femenino"], index=0 if sex == "Masculino" else 1)
-                    unac = c1.date_input("Fecha de Nacimiento", value=fnac_obj, min_value=date(1900, 1, 1), max_value=date.today())
+                    unac = c1.date_input("Fecha de Nacimiento", value=fnac_obj, min_value=date(1900, 1, 1), max_value=ahora().date())
                     
                     if st.form_submit_button("💾 GUARDAR CAMBIOS EN EL PADRÓN", type="primary"):
                         db_query("UPDATE socios SET nombres=?, apellidos=?, telefono=?, direccion=?, correo=?, sexo=?, fecha_nacimiento=? WHERE dni=?", (unom, uape, utel, udir, ucor, usex, str(unac), dni_s), fetch=False)
@@ -1008,7 +1013,7 @@ elif st.session_state.vista == 'secretario':
             tdni, ttipo, tdet = st.text_input("DNI Socio Solicitante:"), st.selectbox("Tipo de Trámite:", ["Solicitud de Renuncia", "Justificación de Inasistencia", "Queja / Sugerencia", "Otros"]), st.text_area("Detalle del documento recibido:")
             if st.form_submit_button("REGISTRAR INGRESO DE DOCUMENTO", type="primary"):
                 if tdni and tdet:
-                    db_query("INSERT INTO tramites (dni_socio, tipo, detalle, estado, fecha, respuesta) VALUES (?,?,?,?,?,?)", (tdni, ttipo, tdet, "En Revisión", datetime.now().strftime("%Y-%m-%d"), ""), fetch=False)
+                    db_query("INSERT INTO tramites (dni_socio, tipo, detalle, estado, fecha, respuesta) VALUES (?,?,?,?,?,?)", (tdni, ttipo, tdet, "En Revisión", ahora().strftime("%Y-%m-%d"), ""), fetch=False)
                     st.success("Trámite registrado con éxito y en espera de revisión por la Directiva.")
                 else: st.warning("DNI y Detalle son obligatorios.")
         
@@ -1049,7 +1054,7 @@ elif st.session_state.vista == 'secretario':
         st.write("El texto que escribas aquí se añadirá al Muro de Avisos del portal de los socios.")
         msg = st.text_area("Escriba el comunicado:")
         if st.button("PUBLICAR AVISO A TODOS LOS SOCIOS", type="primary"):
-            db_query("INSERT INTO comunicados (mensaje, fecha) VALUES (?,?)", (msg, datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
+            db_query("INSERT INTO comunicados (mensaje, fecha) VALUES (?,?)", (msg, ahora().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
             st.success("Comunicado publicado. Todos los socios lo verán al instante en su historial.")
         st.divider(); st.write("### 🧹 LIMPIAR PIZARRA")
         if st.button("🗑️ BORRAR TODO EL HISTORIAL DE COMUNICADOS"):
@@ -1057,7 +1062,7 @@ elif st.session_state.vista == 'secretario':
             st.success("La pizarra de comunicados ha sido vaciada con éxito y el aviso de reunión se ha ocultado.")
 
     elif m == "🙋 ASISTENCIA":
-        fecha_as = st.date_input("Fecha de Asamblea", value=datetime.now()); st.write("Marque la asistencia de los socios:")
+        fecha_as = st.date_input("Fecha de Asamblea", value=ahora().date()); st.write("Marque la asistencia de los socios:")
         lista_socios = db_query("SELECT dni, nombres, apellidos FROM socios WHERE acciones > 0 ORDER BY nombres ASC")
         
         m_falta, m_tarde = get_config("multa_falta", 20.0), get_config("multa_tardanza", 10.0)
@@ -1173,7 +1178,7 @@ elif st.session_state.vista == 'tesorero':
                                 if st.button("💸 PAGAR Y ASIGNAR ACCIÓN", type="primary"):
                                     db_query("UPDATE socios SET acciones = acciones + ? WHERE dni=?", (ce_acc, dni_busq), fetch=False)
                                     db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (ce_tot,), fetch=False)
-                                    fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                                     nombre_fmt = f"{nom.split()[0]} {ape.split()[0]}"
                                     
                                     if ce_cap > 0: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Aporte por Compra Extra - {nombre_fmt} ({ce_acc} acc)", ce_cap, fh), fetch=False)
@@ -1203,7 +1208,8 @@ elif st.session_state.vista == 'tesorero':
                     st.subheader(f"Socio: {nombre_l} ({l_acc} Acciones)")
                     
                     # 1. Calcular aportes
-                    tot_ahorros = float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{liq_dni}%",))[0][0] or 0.0)
+                    nombre_fmt_liq = f"{l_nom.split()[0]} {l_ape.split()[0] if l_ape else ''}".strip()
+                    tot_ahorros = float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{liq_dni}%", f"%{nombre_fmt_liq}%"))[0][0] or 0.0)
                     # 2. Calcular deudas activas
                     deudas_liq = db_query("SELECT SUM(saldo_actual) FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (liq_dni,))
                     tot_deudas = float(deudas_liq[0][0]) if deudas_liq and deudas_liq[0][0] else 0.0
@@ -1229,7 +1235,7 @@ elif st.session_state.vista == 'tesorero':
                     confirmar_liq = st.text_input("Escriba 'LIQUIDAR' para habilitar el botón final:")
                     if confirmar_liq == "LIQUIDAR":
                         if st.button("🚨 EJECUTAR RETIRO Y LIQUIDAR SOCIO", type="primary", use_container_width=True):
-                            fh_liq = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            fh_liq = ahora().strftime("%Y-%m-%d %H:%M:%S")
                             if saldo_a_devolver > 0:
                                 db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (saldo_a_devolver,), fetch=False)
                                 db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Egreso por Liquidación de Socio - {nombre_l}", -saldo_a_devolver, fh_liq), fetch=False)
@@ -1287,7 +1293,7 @@ elif st.session_state.vista == 'tesorero':
                         st.divider(); st.markdown("### 💳 Pago de Préstamos")
                         deudas = db_query("SELECT id, accion_asociada, saldo_actual, monto_original, conteo_minimos FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (pdni,))
                         tasa, amort_pct_act, amort_pct_val, m_min_fijo = get_config("interes_prestamo", 0.0)/100.0, get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0)/100.0, get_config("monto_minimo_capital", 0.0)
-                        mes_limite, mes_actual = int(get_config("mes_limite_minimos", 12)), datetime.now().month
+                        mes_limite, mes_actual = int(get_config("mes_limite_minimos", 12)), ahora().month
                         
                         pagos_deudas = {}
                         if deudas:
@@ -1336,9 +1342,9 @@ elif st.session_state.vista == 'tesorero':
                                 
                         if st.session_state.get('pu_show_voucher', False) and not st.session_state.get('pu_done', False):
                             st.markdown("### 🧾 Vista Previa del Voucher")
-                            fh_pre = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            fh_pre = ahora().strftime("%Y-%m-%d %H:%M:%S")
                             txt_v = f"======================================\n      BANCO LA COLMENA DEL PERÚ\n      COMPROBANTE DE PAGO\n======================================\nFecha: {format_fecha(fh_pre)}\nSocio: {n} {a}\nDNI:   {pdni}\n--------------------------------------\n"
-                            if st.session_state.pu_tot_ap > 0: txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :            S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
+                            if st.session_state.pu_tot_ap > 0: txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :             S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
                             if st.session_state.pu_tot_cap > 0 or st.session_state.pu_tot_int > 0: txt_v += "PAGO DE PRESTAMOS:\n" + "".join([f" - Accion {pr['acc']}:\n      Capital :         S/ {f_m(pr['cap'])}\n      Interes :         S/ {f_m(pr['int'])}\n      Saldo Cap. Act. : S/ {f_m(max(0.0, pr['saldo'] - pr['cap']))}\n" for pr in st.session_state.pu_det_pr]) + f"   Subtotal Prestamos : S/ {f_m(st.session_state.pu_tot_cap + st.session_state.pu_tot_int)}\n--------------------------------------\n"
                             if st.session_state.pu_tot_mul > 0: txt_v += "MULTAS:\n" + "".join([f" - {m_motivo[:20]:<20} : S/ {f_m(m_monto)}\n" for _, m_motivo, m_monto in st.session_state.pu_det_mul]) + f"   Subtotal Multas    : S/ {f_m(st.session_state.pu_tot_mul)}\n--------------------------------------\n"
                             txt_v += f"TOTAL A PAGAR         : S/ {f_m(st.session_state.pu_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
@@ -1357,7 +1363,7 @@ elif st.session_state.vista == 'tesorero':
                                     
                             if can_proceed:
                                 if st.button("✅ 2. CONFIRMAR Y REGISTRAR PAGO A CAJA", type="primary"):
-                                    fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                                     if st.session_state.pu_tot_ap > 0:
                                         db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (st.session_state.pu_tot_ap,), fetch=False)
                                         for ap in st.session_state.pu_det_ap: db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Aporte Mensual - {nombre_fmt} (Acción {ap[0]})", ap[1], fh), fetch=False)
@@ -1403,7 +1409,7 @@ elif st.session_state.vista == 'tesorero':
                 if st.button("➕ AGREGAR A LA COLA", type="primary"):
                     if monto_sol <= 0: st.warning("El monto solicitado debe ser mayor a 0.")
                     elif db_query("SELECT id FROM solicitudes_prestamo WHERE dni_socio=? AND accion=? AND estado='PENDIENTE'", (soc_sel[0], acc_sel)): st.error("⚠️ Este socio ya tiene una solicitud en espera para esa acción.")
-                    else: db_query("INSERT INTO solicitudes_prestamo (dni_socio, accion, monto, fecha) VALUES (?,?,?,?)", (soc_sel[0], acc_sel, monto_sol, datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False); st.success("✅ Solicitud registrada con éxito."); st.rerun()
+                    else: db_query("INSERT INTO solicitudes_prestamo (dni_socio, accion, monto, fecha) VALUES (?,?,?,?)", (soc_sel[0], acc_sel, monto_sol, ahora().strftime("%Y-%m-%d %H:%M:%S")), fetch=False); st.success("✅ Solicitud registrada con éxito."); st.rerun()
                         
                 st.divider(); st.write("#### 📋 Cola Actual (En Espera)")
                 pendientes = db_query("SELECT id, dni_socio, accion, monto FROM solicitudes_prestamo WHERE estado='PENDIENTE'")
@@ -1459,13 +1465,13 @@ elif st.session_state.vista == 'tesorero':
                                             p_act = db_query("SELECT id, monto_original, saldo_actual FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (pdni2, acc_n))
                                             if p_act: m_proy = p_act[0][2] + m_p; db_query("UPDATE prestamos SET monto_original=?, saldo_actual=? WHERE id=?", (m_proy, m_proy, p_act[0][0]), fetch=False)
                                             else:
-                                                m_proy = m_p; prev_conteo_req = db_query("SELECT SUM(conteo_minimos) FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND substr(fecha_inicio, 1, 4)=?", (pdni2, acc_n, str(datetime.now().year)))
-                                                db_query("INSERT INTO prestamos (dni_socio, monto_original, saldo_actual, fecha_inicio, estado, accion_asociada, conteo_minimos) VALUES (?, ?, ?, ?, 'ACTIVO', ?, ?)", (pdni2, m_proy, m_proy, datetime.now().strftime("%Y-%m-%d"), acc_n, prev_conteo_req[0][0] if prev_conteo_req and prev_conteo_req[0][0] else 0), fetch=False)
+                                                m_proy = m_p; prev_conteo_req = db_query("SELECT SUM(conteo_minimos) FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND substr(fecha_inicio, 1, 4)=?", (pdni2, acc_n, str(ahora().year)))
+                                                db_query("INSERT INTO prestamos (dni_socio, monto_original, saldo_actual, fecha_inicio, estado, accion_asociada, conteo_minimos) VALUES (?, ?, ?, ?, 'ACTIVO', ?, ?)", (pdni2, m_proy, m_proy, ahora().strftime("%Y-%m-%d"), acc_n, prev_conteo_req[0][0] if prev_conteo_req and prev_conteo_req[0][0] else 0), fetch=False)
                                             
-                                            fh_exacta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                            fh_exacta = ahora().strftime("%Y-%m-%d %H:%M:%S")
                                             db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (m_p,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Préstamo Desembolsado - {nombre_fmt_l} (Acción {acc_n})", -m_p, fh_exacta), fetch=False); db_query("UPDATE solicitudes_prestamo SET estado='APROBADO' WHERE id=?", (item['id'],), fetch=False)
                                             
-                                            sp, cuotas, tot_i, fh_d = m_proy, [], 0, datetime.now()
+                                            sp, cuotas, tot_i, fh_d = m_proy, [], 0, ahora()
                                             m, a, tasa, m_min = fh_d.month, fh_d.year, get_config("interes_prestamo", 0.0) / 100.0, get_config("monto_minimo_capital", 50.0)
                                             num_c = 1
                                             while sp > 0.01:
@@ -1488,13 +1494,13 @@ elif st.session_state.vista == 'tesorero':
                                             p_act = db_query("SELECT id, monto_original, saldo_actual FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (pdni2, acc_n))
                                             if p_act: m_proy = p_act[0][2] + m_p; db_query("UPDATE prestamos SET monto_original=?, saldo_actual=? WHERE id=?", (m_proy, m_proy, p_act[0][0]), fetch=False)
                                             else:
-                                                m_proy = m_p; prev_conteo_req = db_query("SELECT SUM(conteo_minimos) FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND substr(fecha_inicio, 1, 4)=?", (pdni2, acc_n, str(datetime.now().year)))
-                                                db_query("INSERT INTO prestamos (dni_socio, monto_original, saldo_actual, fecha_inicio, estado, accion_asociada, conteo_minimos) VALUES (?, ?, ?, ?, 'ACTIVO', ?, ?)", (pdni2, m_p, m_p, datetime.now().strftime("%Y-%m-%d"), acc_n, prev_conteo_req[0][0] if prev_conteo_req and prev_conteo_req[0][0] else 0), fetch=False)
+                                                m_proy = m_p; prev_conteo_req = db_query("SELECT SUM(conteo_minimos) FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND substr(fecha_inicio, 1, 4)=?", (pdni2, acc_n, str(ahora().year)))
+                                                db_query("INSERT INTO prestamos (dni_socio, monto_original, saldo_actual, fecha_inicio, estado, accion_asociada, conteo_minimos) VALUES (?, ?, ?, ?, 'ACTIVO', ?, ?)", (pdni2, m_p, m_p, ahora().strftime("%Y-%m-%d"), acc_n, prev_conteo_req[0][0] if prev_conteo_req and prev_conteo_req[0][0] else 0), fetch=False)
                                             
-                                            fh_exacta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                            fh_exacta = ahora().strftime("%Y-%m-%d %H:%M:%S")
                                             db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (m_p,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Préstamo Desembolsado - {nombre_fmt_l} (Acción {acc_n})", -m_p, fh_exacta), fetch=False); db_query("UPDATE solicitudes_prestamo SET estado='APROBADO PARCIAL' WHERE id=?", (item['id'],), fetch=False)
                                             
-                                            sp, cuotas, tot_i, fh_d = m_proy, [], 0, datetime.now()
+                                            sp, cuotas, tot_i, fh_d = m_proy, [], 0, ahora()
                                             m, a, tasa, m_min = fh_d.month, fh_d.year, get_config("interes_prestamo", 0.0) / 100.0, get_config("monto_minimo_capital", 50.0)
                                             num_c = 1
                                             while sp > 0.01:
@@ -1534,7 +1540,7 @@ elif st.session_state.vista == 'tesorero':
         proy_aportes = tot_acc * get_config("aporte_mensual", 0.0)
         deudas_activas = db_query("SELECT saldo_actual, monto_original, conteo_minimos FROM prestamos WHERE estado='ACTIVO'")
         proy_interes, proy_capital = 0.0, 0.0
-        tasa_proy, amort_pct_act_proy, amort_pct_val_proy, m_min_fijo_proy, mes_limite_proy, mes_actual_proy = get_config("interes_prestamo", 0.0)/100.0, get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0)/100.0, get_config("monto_minimo_capital", 0.0), int(get_config("mes_limite_minimos", 12)), datetime.now().month
+        tasa_proy, amort_pct_act_proy, amort_pct_val_proy, m_min_fijo_proy, mes_limite_proy, mes_actual_proy = get_config("interes_prestamo", 0.0)/100.0, get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0)/100.0, get_config("monto_minimo_capital", 0.0), int(get_config("mes_limite_minimos", 12)), ahora().month
         
         if deudas_activas:
             for ds, dorig, dconteo in deudas_activas:
@@ -1582,7 +1588,7 @@ elif st.session_state.vista == 'tesorero':
         
         st.divider(); st.subheader("📋 Historial de Movimientos de Caja")
         col_f1, col_f2, col_f3 = st.columns(3)
-        caja_f_ini, caja_f_fin, caja_f_dni = col_f1.date_input("Desde la fecha:", value=date(date.today().year, 1, 1), key="caja_fini"), col_f2.date_input("Hasta la fecha:", value=date.today(), key="caja_ffin"), col_f3.text_input("Buscar por DNI (Opcional):", key="caja_fdni")
+        caja_f_ini, caja_f_fin, caja_f_dni = col_f1.date_input("Desde la fecha:", value=date(ahora().year, 1, 1), key="caja_fini"), col_f2.date_input("Hasta la fecha:", value=ahora().date(), key="caja_ffin"), col_f3.text_input("Buscar por DNI (Opcional):", key="caja_fdni")
         
         query, params = "SELECT fecha, tipo, monto FROM movimientos WHERE date(fecha) >= ? AND date(fecha) <= ?", [str(caja_f_ini), str(caja_f_fin)]
         if caja_f_dni:
@@ -1599,7 +1605,7 @@ elif st.session_state.vista == 'tesorero':
             df_caja = pd.DataFrame(movs_caja_fmt, columns=["Fecha", "Detalle de Operación", "Monto (S/)"])
             df_caja["Monto (S/)"] = df_caja["Monto (S/)"].apply(lambda x: f"S/ {f_m(x)}")
             st.dataframe(df_caja, use_container_width=True)
-            st.download_button(label="📥 DESCARGAR REPORTE EN PDF", data=generar_pdf_historial_caja(movs_caja_fmt, caja_f_ini, caja_f_fin, caja_f_dni), file_name=f"Reporte_Caja_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary")
+            st.download_button(label="📥 DESCARGAR REPORTE EN PDF", data=generar_pdf_historial_caja(movs_caja_fmt, caja_f_ini, caja_f_fin, caja_f_dni), file_name=f"Reporte_Caja_{ahora().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary")
         else: st.info("No se encontraron movimientos en ese rango de fechas o con ese DNI.")
 
     elif menu_t == "📥 CAJA CHICA":
@@ -1611,13 +1617,13 @@ elif st.session_state.vista == 'tesorero':
         with t1:
             i_con, i_det, i_mon = st.selectbox("Concepto:", ["Multa", "Tardanza", "Otro"]), st.text_input("Detalle (Opcional):"), st.number_input("Monto Ingreso (S/):", min_value=0.0)
             if st.button("Registrar Ingreso", type="primary"):
-                fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                 db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (i_mon,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Caja Chica - {i_con} | {i_det}", i_mon, fh), fetch=False)
                 st.success("Ingreso registrado en Caja Chica.")
         with t2:
             e_con, e_det, e_mon = st.selectbox("Concepto Egreso:", ["Insumos", "Administrativo", "Otro"]), st.text_input("Detalle Egreso:"), st.number_input("Monto Egreso (S/):", min_value=0.0)
             if st.button("Registrar Egreso"):
-                fh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
                 db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (e_mon,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Egreso Caja Chica - {e_con} | {e_det}", -e_mon, fh), fetch=False)
                 st.success("Egreso registrado en Caja Chica.")
         with t3:
@@ -1628,7 +1634,7 @@ elif st.session_state.vista == 'tesorero':
                 df_cc = pd.DataFrame(movs_cc, columns=["Fecha", "Concepto / Detalle", "Monto"])
                 df_cc["Fecha"], df_cc["Concepto / Detalle"], df_cc["Monto"] = df_cc["Fecha"].apply(format_fecha), df_cc["Concepto / Detalle"].apply(format_movimiento), df_cc["Monto"].apply(lambda x: f"S/ {f_m(x)}")
                 st.dataframe(df_cc, use_container_width=True)
-                st.download_button(label="📥 DESCARGAR REPORTE EN EXCEL (CSV)", data=df_cc.to_csv(index=False).encode('utf-8'), file_name=f"Reporte_CajaChica_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv", type="primary")
+                st.download_button(label="📥 DESCARGAR REPORTE EN EXCEL (CSV)", data=df_cc.to_csv(index=False).encode('utf-8'), file_name=f"Reporte_CajaChica_{ahora().strftime('%Y%m%d')}.csv", mime="text/csv", type="primary")
             else: st.info("Aún no hay movimientos registrados en la Caja Chica.")
 
     elif menu_t == "⚙️ REGLAS FINANCIERAS":
@@ -1671,19 +1677,19 @@ elif st.session_state.vista == 'tesorero':
         caja_prin_disp = (float(db_query("SELECT SUM(monto) FROM movimientos")[0][0] or 0.0) - ((db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Ingreso Caja Chica%' OR tipo = 'Depósito Caja'")[0][0] or 0.0) - abs(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Egreso Caja Chica%' OR tipo = 'Retiro Caja'")[0][0] or 0.0)))
         tot_int_disponible = max(0.0, float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%nter%' AND tipo NOT LIKE '%Caja Chica%'")[0][0] or 0.0) + float(db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE 'Pago Directiva%' OR tipo LIKE 'Pago Utilidades%' OR tipo LIKE 'Ajuste Interno - Salida de Utilidades%'")[0][0] or 0.0))
         tot_acciones = int(db_query("SELECT SUM(acciones) FROM socios")[0][0] or 0)
-        anio_actual = datetime.now().year
+        anio_actual = ahora().year
 
         with st.expander("🔮 Proyección de Ganancias a Diciembre (Cierre de Año)", expanded=False):
             tasa, m_min = get_config("interes_prestamo", 0.0) / 100.0, get_config("monto_minimo_capital", 50.0)
             
             # --- DETECCIÓN INTELIGENTE DEL MES ACTUAL ---
-            mes_actual_str = datetime.now().strftime("%Y-%m")
+            mes_actual_str = ahora().strftime("%Y-%m")
             # Buscamos si ya hubo cobro de intereses reales este mes
             pagos_este_mes = db_query("SELECT id FROM movimientos WHERE tipo LIKE '%nter%' AND fecha LIKE ?", (f"{mes_actual_str}%",))
             
             # Si no hay pagos de intereses este mes, sumamos 1 para incluir el mes actual en la proyección
             ajuste_mes_actual = 0 if pagos_este_mes else 1
-            meses_restantes = max(0, 12 - datetime.now().month + ajuste_mes_actual)
+            meses_restantes = max(0, 12 - ahora().month + ajuste_mes_actual)
             # --------------------------------------------
             
             proyeccion_futura_int = 0.0
@@ -1724,7 +1730,7 @@ elif st.session_state.vista == 'tesorero':
                     else:
                         if c2.button(f"💸 Pagar {ds.split(':')[0]}", key=f"pay_dir_{ds}"):
                             if caja_prin_disp >= pago_cu_truncado:
-                                fh_exacta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                fh_exacta = ahora().strftime("%Y-%m-%d %H:%M:%S")
                                 db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (pago_cu_truncado,), fetch=False)
                                 db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Pago Directiva {anio_actual} - {ds}", -pago_cu_truncado, fh_exacta), fetch=False)
                                 st.rerun()
@@ -1756,7 +1762,7 @@ elif st.session_state.vista == 'tesorero':
                     elif caja_prin_disp < sobrante_caja_chica: st.error("❌ No hay fondos reales en la Caja Principal para realizar el pase a la Caja Chica.")
                     else:
                         if st.button("📥 Pasar Sobrante a Caja Chica", type="primary"):
-                            fh_exacta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            fh_exacta = ahora().strftime("%Y-%m-%d %H:%M:%S")
                             db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ajuste Interno - Salida de Utilidades {anio_actual}", -sobrante_caja_chica, fh_exacta), fetch=False)
                             db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Caja Chica - Sobrante Utilidades {anio_actual}", sobrante_caja_chica, fh_exacta), fetch=False)
                             st.rerun()
@@ -1772,7 +1778,7 @@ elif st.session_state.vista == 'tesorero':
                         else:
                             if st.button(f"💸 Pagar Socio", key=f"pay_socio_{s_dni}"):
                                 if caja_prin_disp >= monto_pagar:
-                                    fh_exacta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    fh_exacta = ahora().strftime("%Y-%m-%d %H:%M:%S")
                                     db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (monto_pagar,), fetch=False)
                                     db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Pago Utilidades {anio_actual} - {s_dni} ({s_acc} acc)", -monto_pagar, fh_exacta), fetch=False)
                                     st.rerun()
@@ -1799,7 +1805,7 @@ elif st.session_state.vista == 'tesorero':
                     with open("banquito.db", "rb") as f:
                         db_bytes = f.read()
                     
-                    fecha_hoy = datetime.now().strftime("%Y_%m_%d")
+                    fecha_hoy = ahora().strftime("%Y_%m_%d")
                     
                     st.success("✅ ¡Base de datos preparada para descarga!")
                     st.download_button(
@@ -1846,7 +1852,7 @@ elif st.session_state.vista == 'tesorero':
                         except: pass 
                         
                         db_query("DELETE FROM movimientos WHERE id=?", (id_mov,), fetch=False)
-                        db_query("INSERT INTO historial_anulaciones (fecha, detalle, autorizador) VALUES (?,?,?)", (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), f"Se anuló operación ID {id_mov}: {format_movimiento(t_mov)} por S/ {f_m(m_mov)}", "Presidente"), fetch=False)
+                        db_query("INSERT INTO historial_anulaciones (fecha, detalle, autorizador) VALUES (?,?,?)", (ahora().strftime("%Y-%m-%d %H:%M:%S"), f"Se anuló operación ID {id_mov}: {format_movimiento(t_mov)} por S/ {f_m(m_mov)}", "Presidente"), fetch=False)
                         st.session_state.anular_success = "✅ Operación anulada correctamente. Caja, Deudas y Acciones han sido restauradas."; st.rerun()
                     else: st.error("❌ Clave de presidente incorrecta.")
                         
