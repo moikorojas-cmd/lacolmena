@@ -199,15 +199,29 @@ def calcular_nivelacion_por_accion():
             aportes_mes[mes_key] = aportes_mes.get(mes_key, 0.0) + float(m)
         
         meses_pagados = len(aportes_mes.keys())
-        mes_actual_str = hoy.strftime("%Y-%m")
-        anio_actual_str = hoy.strftime("%Y") 
-        cap_global = 0.0
         
-        # Reconstruimos los intereses que este socio debió generar en el AÑO EN CURSO
-        for mes in sorted(aportes_mes.keys()):
-            cap_global += aportes_mes[mes]
-            if mes.startswith(anio_actual_str) and mes < mes_actual_str: 
-                int_global += cap_global * tasa
+        cap_global = 0.0
+        int_global = 0.0
+        anio_actual_str = hoy.strftime("%Y")
+        
+        # 1. Rescatamos el capital de años anteriores (si el banco viene funcionando desde antes)
+        for mes, monto in aportes_mes.items():
+            if mes < f"{anio_actual_str}-01":
+                cap_global += monto
+                
+        # 2. Recorrido de CALENDARIO ESTRICTO (Para no saltarse meses sin pago)
+        # Empezamos desde enero (o desde la fundación si el banco se creó este mismo año)
+        mes_inicio = f_fundacion.month if f_fundacion.year == hoy.year else 1
+        
+        # Recorremos hasta el mes anterior (hoy.month), excluyendo el mes actual como bien indicaste
+        for mes_num in range(mes_inicio, hoy.month):
+            mes_str = f"{anio_actual_str}-{mes_num:02d}"
+            
+            # Sumamos el aporte de ese mes. Si no pagó ese mes, get() devuelve 0.0 y el capital se mantiene
+            cap_global += aportes_mes.get(mes_str, 0.0)
+            
+            # Calculamos el interés del mes sobre todo el capital acumulado
+            int_global += cap_global * tasa
                 
         acc_modelo = db_query("SELECT acciones FROM socios WHERE dni=?", (socio_max_dni,))[0][0]
         int_por_accion = int_global / float(acc_modelo)
