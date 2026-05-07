@@ -1575,7 +1575,10 @@ elif st.session_state.vista == 'tesorero':
         
         resumen_socios, morosos = [], False
         for s_dni, s_nom, s_ape, s_acc in db_query("SELECT dni, nombres, apellidos, acciones FROM socios ORDER BY nombres ASC"):
-            ap_socio = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{s_dni}%",))[0][0] or 0.0
+            # CORRECCIÓN: Creamos el nombre corto y buscamos por DNI o por Nombre
+            nombre_fmt = f"{s_nom.split()[0]} {s_ape.split()[0] if s_ape else ''}".strip()
+            ap_socio = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{s_dni}%", f"%{nombre_fmt}%"))[0][0] or 0.0
+            
             deuda = (cap_esperado_por_accion * s_acc) - ap_socio
             estado = f"⚠️ Falta S/ {f_m(deuda)}" if deuda > 0.01 else (f"⭐ Adelantó S/ {f_m(abs(deuda))}" if deuda < -0.01 else "✅ Al Día")
             if deuda > 0.01: morosos = True
