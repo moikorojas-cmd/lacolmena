@@ -160,28 +160,31 @@ def format_movimiento(texto):
 def truncar_a_un_decimal(numero): return math.floor(numero * 10) / 10.0
 
 def calcular_nivelacion_por_accion():
-    # 1. Obtenemos la fecha de fundación y reglas actuales
+    # 1. Configuración de tiempos y reglas
     f_fundacion_str = get_config("fecha_fundacion", datetime.now().strftime("%Y-%m-%d"), str)
     try: f_fundacion = datetime.strptime(f_fundacion_str[:10], "%Y-%m-%d")
     except: f_fundacion = datetime.now()
     
     hoy = datetime.now()
+    # Ajuste de zona horaria para Perú si es necesario (evita saltos de mes fantasma)
+    # hoy = datetime.now() - timedelta(hours=5) 
+    
     meses_transcurridos = (hoy.year - f_fundacion.year) * 12 + (hoy.month - f_fundacion.month) + 1
     if meses_transcurridos < 1: meses_transcurridos = 1
     
     cuota_actual = get_config("aporte_mensual", 0.0)
     tasa = get_config("interes_prestamo", 0.0) / 100.0
 
-    # 2. Buscamos al "Socio Modelo" (el que tiene más capital real ahorrado)
-    socios_data = db_query("SELECT dni, acciones FROM socios WHERE acciones > 0")
+    # 2. Identificar al Socio Modelo (el de mayor capital por acción)
+    socios_data = db_query("SELECT dni, nombres, apellidos, acciones FROM socios WHERE acciones > 0")
     max_cap_por_accion, socio_max_dni = 0.0, None
     
     if not socios_data:
-        # Banco vacío: Nivelación = Solo los meses pasados a la cuota actual
         return float(meses_transcurridos * cuota_actual), 0.0
         
-    for s_dni, s_acc in socios_data:
-        ap_socio = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{s_dni}%",))[0][0] or 0.0
+    for s_dni, s_nom, s_ape, s_acc in socios_data:
+        nombre_fmt = f"{s_nom.split()[0]} {s_ape.split()[0] if s_ape else ''}".strip()
+        ap_socio = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{s_dni}%", f"%{nombre_fmt}%"))[0][0] or 0.0
         cap_actual_accion = float(ap_socio) / float(s_acc)
         if cap_actual_accion >= max_cap_por_accion: 
             max_cap_por_accion = cap_actual_accion
@@ -190,43 +193,39 @@ def calcular_nivelacion_por_accion():
     int_global, int_por_accion, meses_pagados = 0.0, 0.0, 0
     cap_esperado = max_cap_por_accion
 
-    # 3. Calculamos la realidad histórica del Socio Modelo
+    # 3. Reconstrucción del Calendario Estricto
     if socio_max_dni:
-        movs = db_query("SELECT fecha, monto FROM movimientos WHERE tipo LIKE '%Aporte%' AND tipo LIKE ?", (f"%{socio_max_dni}%",))
+        s_max_info = db_query("SELECT nombres, apellidos, acciones FROM socios WHERE dni=?", (socio_max_dni,))
+        s_max_nom_fmt = f"{s_max_info[0][0].split()[0]} {s_max_info[0][1].split()[0] if s_max_info[0][1] else ''}".strip()
+        acc_modelo = float(s_max_info[0][2])
+        
+        # Obtenemos aportes reales mes a mes del socio modelo
+        movs = db_query("SELECT fecha, monto FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{socio_max_dni}%", f"%{s_max_nom_fmt}%"))
         aportes_mes = {}
         for f, m in movs:
-            mes_key = f[:7]
+            mes_key = f[:7] # YYYY-MM
             aportes_mes[mes_key] = aportes_mes.get(mes_key, 0.0) + float(m)
         
         meses_pagados = len(aportes_mes.keys())
+        anio_act_str = hoy.strftime("%Y")
+        cap_acumulado = 0.0
         
-        cap_global = 0.0
-        int_global = 0.0
-        anio_actual_str = hoy.strftime("%Y")
-        
-        # 1. Rescatamos el capital de años anteriores (si el banco viene funcionando desde antes)
-        for mes, monto in aportes_mes.items():
-            if mes < f"{anio_actual_str}-01":
-                cap_global += monto
-                
-        # 2. Recorrido de CALENDARIO ESTRICTO (Para no saltarse meses sin pago)
-        # Empezamos desde enero (o desde la fundación si el banco se creó este mismo año)
+        # Paso Maestro: Recorrer desde Enero (o fundación) hasta el mes ANTERIOR a hoy
+        # Si hoy es Mayo (5), recorre 1, 2, 3, 4.
         mes_inicio = f_fundacion.month if f_fundacion.year == hoy.year else 1
         
-        # Recorremos hasta el mes anterior (hoy.month), excluyendo el mes actual como bien indicaste
-        for mes_num in range(mes_inicio, hoy.month):
-            mes_str = f"{anio_actual_str}-{mes_num:02d}"
+        for m_num in range(mes_inicio, hoy.month):
+            m_key = f"{anio_act_str}-{m_num:02d}"
+            # Sumamos lo que aportó en ese mes (si no aportó, se suma 0 y el capital se mantiene)
+            cap_acumulado += aportes_mes.get(m_key, cuota_actual * acc_modelo if meses_pagados == 0 else 0.0)
             
-            # Sumamos el aporte de ese mes. Si no pagó ese mes, get() devuelve 0.0 y el capital se mantiene
-            cap_global += aportes_mes.get(mes_str, 0.0)
+            # Calculamos interés mensual CON REDONDEO (igual que en los préstamos)
+            # Esto es lo que garantiza que 1.5 + 3.0 + 4.5 + 6.0 sume lo correcto
+            int_global += math.ceil(cap_acumulado * tasa)
             
-            # Calculamos el interés del mes sobre todo el capital acumulado
-            int_global += cap_global * tasa
-                
-        acc_modelo = db_query("SELECT acciones FROM socios WHERE dni=?", (socio_max_dni,))[0][0]
-        int_por_accion = int_global / float(acc_modelo)
+        int_por_accion = int_global / acc_modelo
         
-    # 4. EL TOQUE MAESTRO: Ajustamos solo los meses que faltan a la regla de hoy
+    # 4. Ajuste final de capital
     meses_faltantes = meses_transcurridos - meses_pagados
     if meses_faltantes > 0:
         cap_esperado += (meses_faltantes * cuota_actual)
