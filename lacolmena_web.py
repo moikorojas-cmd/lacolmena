@@ -249,8 +249,14 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
     res_p = db_query("SELECT saldo_actual FROM prestamos WHERE dni_socio=? AND accion_asociada=? AND estado='ACTIVO'", (dni, acc_num))
     saldo_hoy = res_p[0][0] if res_p else 0.0
     
-    # CORRECCIÓN 1: Buscar tanto por DNI como por Nombre para no perder el pago de Mayo
-    nombre_fmt = f"{nombre_completo.split()[0]} {nombre_completo.split()[1] if len(nombre_completo.split()) > 1 else ''}".strip()
+    # 🚨 CORRECCIÓN: Extraer nombres exactos de la BD para evitar confusión con segundos nombres
+    soc_db = db_query("SELECT nombres, apellidos FROM socios WHERE dni=?", (dni,))
+    if soc_db:
+        n_db, a_db = soc_db[0]
+        nombre_fmt = f"{n_db.split()[0]} {a_db.split()[0] if a_db else ''}".strip()
+    else:
+        nombre_fmt = f"{nombre_completo.split()[0]}" # Respaldo por si no encuentra
+        
     filtro_acc = f"%(Acción {acc_num})%"
     
     if f_inicio and f_fin:
@@ -260,16 +266,19 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
         movs = db_query("SELECT fecha, tipo, monto FROM movimientos WHERE (tipo LIKE ? OR tipo LIKE ?) AND tipo LIKE ? ORDER BY fecha ASC", (f"%{dni}%", f"%{nombre_fmt}%", filtro_acc))
         rango_str = "Rango: Histórico Completo"
         
-    # CORRECCIÓN 2: Ajuste estricto a la hora de Perú (UTC-5)
+    # Ajuste estricto a la hora de Perú (UTC-5)
     hoy_peru = ahora()
     
+    # --- DESDE AQUÍ HACIA ABAJO EL CÓDIGO SE MANTIENE IGUAL ---
     pdf = FPDF(); pdf.add_page(); pdf.set_font("Courier", size=9)
     if os.path.exists("logo.png"): pdf.image("logo.png", x=10, y=8, w=35); pdf.ln(25)
     header = f"ESTADO DE CUENTA DETALLADO - ACCIÓN {acc_num}\nBANCO LA COLMENA DEL PERÚ 🐝\n" + "="*85 + "\n" + f"Socio: {nombre_completo}\nDNI  : {dni}\n{rango_str}\nFecha de reporte: {hoy_peru.strftime('%d/%m/%Y %H:%M:%S')}\n" + "="*85 + "\n\n" + "⏪ PARTE 1: HISTORIAL DE MOVIMIENTOS\n" + "-"*85 + "\n" + f"{'FECHA':<10} | {'DETALLE':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     reporte_texto, saldo_acumulado, historial_agrupado = header, 0.0, {}
     for m in movs:
         f, t, mon = m[0], m[1], m[2]; f_dia = f[:10] 
-        if "Préstamo" in t:
+        
+        # AQUÍ ESTÁ LA MAGIA QUE ARREGLA LAS COLUMNAS
+        if "Desembolsado" in t or "Préstamo a" in t:
             key = f"{f_dia}_2_DESEMBOLSO"
             if key not in historial_agrupado: historial_agrupado[key] = {'fecha': f_dia, 'cap': 0.0, 'int': 0.0, 'tipo': 'DESEMBOLSO'}
             historial_agrupado[key]['cap'] += abs(mon)
@@ -278,6 +287,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
             if key not in historial_agrupado: historial_agrupado[key] = {'fecha': f_dia, 'cap': 0.0, 'int': 0.0, 'tipo': 'PAGO'}
             if "Interés" in t: historial_agrupado[key]['int'] += abs(mon)
             elif "Pago Cuota" in t: historial_agrupado[key]['cap'] += abs(mon)
+            
     for key in sorted(historial_agrupado.keys()):
         d_mov = historial_agrupado[key]
         f_display = format_fecha(d_mov['fecha'])
@@ -288,6 +298,7 @@ def generar_pdf_estado_cuenta(nombre_completo, dni, acc_num, f_inicio=None, f_fi
             if d_mov['cap'] > 0 or d_mov['int'] > 0:
                 saldo_acumulado -= d_mov['cap']; saldo_acumulado = 0.0 if saldo_acumulado < 0.01 else saldo_acumulado
                 reporte_texto += f"{f_display:<10} | {'PAGO CUOTA':<20} | {d_mov['cap']:>9.2f} | {d_mov['int']:>9.2f} | {d_mov['cap']+d_mov['int']:>9.2f} | {saldo_acumulado:>10.2f} C\n"
+                
     reporte_texto += "\n\n⏩ PARTE 2: PROYECCIÓN DE PAGOS PENDIENTES (CRONOGRAMA ACTUALIZADO)\n" + "-"*85 + "\n" + f"{'NRO CUOTA':<10} | {'MES Y AÑO':<20} | {'CAPITAL':<9} | {'INTERES':<9} | {'CUOTA':<9} | {'SALDO CAP.'}\n" + "-"*85 + "\n"
     sp, mes, anio, total_proyectado = saldo_hoy, ahora().month, ahora().year, 0.0
     amort_pct_act, amort_pct_val = get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0) / 100.0
@@ -1132,7 +1143,7 @@ elif st.session_state.vista == 'tesorero':
                                     if "Pago Cuota" in t_mov: historial_procesado[key]['cap'] += abs(mon)
                                     else: historial_procesado[key]['int'] += abs(mon)
                                     historial_procesado[key]['total'] += abs(mon)
-                                elif "Préstamo a" in t_mov: historial_procesado[f"DESEMB_{id_mov}"] = {'fecha': f_mov, 'detalle': "Desembolso Préstamo", 'cap': abs(mon), 'int': 0.0, 'total': abs(mon)}
+                                elif "Préstamo a" in t_mov or "Desembolsado" in t_mov: historial_procesado[f"DESEMB_{id_mov}"] = {'fecha': f_mov, 'detalle': "Desembolso Préstamo", 'cap': abs(mon), 'int': 0.0, 'total': abs(mon)}
                                 else:
                                     t_limpio = t_mov.split("(")[0].strip() if "(" in t_mov and "Acción" in t_mov else t_mov
                                     historial_procesado[f"OTRO_{id_mov}"] = {'fecha': f_mov, 'detalle': format_movimiento(t_limpio), 'cap': 0.0, 'int': 0.0, 'total': abs(mon)}
