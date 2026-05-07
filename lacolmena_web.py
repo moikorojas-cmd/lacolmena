@@ -778,20 +778,46 @@ elif st.session_state.socio_logged_in:
     if menu_s == "📊 RESUMEN Y PRÉSTAMOS":
         nombre_fmt = f"{soc_data[0][0].split()[0]} {soc_data[0][1].split()[0] if soc_data[0][1] else ''}".strip()
         tot_ah = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{s_dni}%", f"%{nombre_fmt}%"))[0][0] or 0.0
-        total_prestamos_prox = 0.0
-        tasa, amort_pct_act, amort_pct_val, m_min_fijo = get_config("interes_prestamo", 0.0)/100.0, get_config("amort_porcentaje_activo", "NO", str), get_config("amort_porcentaje_valor", 0.0)/100.0, get_config("monto_minimo_capital", 0.0)
         
+        tasa = get_config("interes_prestamo", 0.0) / 100.0
+        amort_pct_act = get_config("amort_porcentaje_activo", "NO", str)
+        amort_pct_val = get_config("amort_porcentaje_valor", 0.0) / 100.0
+        m_min_fijo = get_config("monto_minimo_capital", 0.0)
+        mes_limite = int(get_config("mes_limite_minimos", 12))
+        mes_actual = ahora().month
+
+        # 1. Traer y calcular multas pendientes (Igual que en Tesorería)
+        multas = db_query("SELECT SUM(monto) FROM multas_pendientes WHERE dni_socio=? AND estado='PENDIENTE'", (s_dni,))
+        tot_multas_socio = float(multas[0][0]) if multas and multas[0][0] else 0.0
+        
+        # 2. Calcular préstamos alineado con Tesorería
+        total_prestamos_prox = 0.0
         deudas = db_query("SELECT id, accion_asociada, saldo_actual, monto_original, conteo_minimos FROM prestamos WHERE dni_socio=? AND estado='ACTIVO'", (s_dni,))
         if deudas:
             for d in deudas:
                 d_saldo, d_orig, d_conteo = d[2], d[3], d[4]
-                min_req = min(float(math.ceil(d_orig * amort_pct_val)), d_saldo) if amort_pct_act == "SI" and (d_conteo >= 3 or ahora().month > int(get_config("mes_limite_minimos", 12))) else min(m_min_fijo, d_saldo)
-                total_prestamos_prox += (min_req + float(math.ceil(d_saldo * tasa)))
+                
+                m_pct = float(math.ceil(d_orig * amort_pct_val)) if amort_pct_act == "SI" else float(m_min_fijo)
+                if m_pct < m_min_fijo: m_pct = float(m_min_fijo)
+                
+                if amort_pct_act == "SI":
+                    if d_conteo < 3 and mes_actual <= mes_limite:
+                        default_val = min(m_pct, d_saldo) # Tesorería sugiere el porcentaje aunque tenga mínimos disponibles
+                    else:
+                        default_val = min(m_pct, d_saldo)
+                else:
+                    default_val = min(m_min_fijo, d_saldo)
+                
+                int_calc = float(math.ceil(d_saldo * tasa))
+                total_prestamos_prox += (default_val + int_calc)
                 
         cm1, cm2, cm3 = st.columns(3)
         cm1.metric("Aportes Totales Ahorrados", f"S/ {f_m(tot_ah)}")
         cm2.metric("Aporte Promedio x Acción", f"S/ {f_m(tot_ah / acc_socio if acc_socio > 0 else 0.0)}")
-        cm3.metric("Monto a Pagar Próx. Reunión", f"S/ {f_m((acc_socio * get_config('aporte_mensual', 0.0)) + total_prestamos_prox + a_pagar_cumple)}", help="Incluye aportes obligatorios, amortización mínima a capital, intereses y cuotas de cumpleaños si aplican.")
+        
+        # 3. Métrica actualizada: Aportes + Préstamos + Multas (Excluimos cumpleaños para que cuadre con Pago Unificado)
+        total_reunion = (acc_socio * get_config('aporte_mensual', 0.0)) + total_prestamos_prox + tot_multas_socio
+        cm3.metric("Monto a Pagar Próx. Reunión", f"S/ {f_m(total_reunion)}", help="Incluye aportes obligatorios, amortización sugerida, intereses y multas (Cumpleaños se abona aparte).")
         
         st.divider(); st.subheader("💳 MIS PRÉSTAMOS ACTIVOS")
         if deudas:
@@ -799,6 +825,9 @@ elif st.session_state.socio_logged_in:
                 st.warning(f"**Préstamo en Acción {d[1]}** | Saldo Capital Restante: **S/ {f_m(d[2])}**")
                 st.download_button(label=f"📄 DESCARGAR CRONOGRAMA ACTUALIZADO (ACCIÓN {d[1]})", data=generar_pdf_estado_cuenta(st.session_state.socio_nombre, s_dni, d[1]), file_name=f"Cronograma_Actualizado_Acc{d[1]}.pdf", mime="application/pdf", key=f"btn_dl_{d[0]}")
         else: st.success("No tienes deudas activas en este momento.")
+        
+        if tot_multas_socio > 0:
+            st.error(f"🚨 **TIENES MULTAS PENDIENTES POR S/ {f_m(tot_multas_socio)}**. Este monto ya está incluido en el cálculo superior.")
             
     elif menu_s == "📅 HISTORIAL DE PAGOS":
         st.subheader("📅 HISTORIAL DE PAGOS Y APORTES")
