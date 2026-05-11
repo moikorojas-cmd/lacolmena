@@ -64,8 +64,13 @@ st.markdown("""
     <div class="fixed-footer">Banco La Colmena del Perú V 1.0 / Ing. Juan Moisés Rojas De La Torre / CIP: 273739.</div>
 """, unsafe_allow_html=True)
 
-# 🔐 TU LLAVE MAESTRA A LA NUBE
-DB_URL = "postgresql://postgres.ykumtkfvstlhfvmtnory:Moiko861224R@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
+# 🔐 TU LLAVE MAESTRA A LA NUBE (Oculta usando Streamlit Secrets)
+try:
+    # Intenta leer de los secretos seguros de Streamlit (.streamlit/secrets.toml)
+    DB_URL = st.secrets["DB_URL"]
+except:
+    # Salvavidas temporal (borra esta línea cuando configures tus secretos)
+    DB_URL = "postgresql://postgres.ykumtkfvstlhfvmtnory:Moiko861224R@aws-1-sa-east-1.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
 def obtener_conexion():
@@ -98,12 +103,79 @@ def db_query(query, params=(), fetch=True):
                     lista_final.append(fila_arreglada)
                 return lista_final
                 
-            conn.commit()
-            return None
+        conn.commit()
+        return None
     except Exception as e:
         st.cache_resource.clear() 
         return [(0.0,)] if fetch and "SUM" in query else []
+
+def inicializar_db():
+    # Usamos nuestra conexión a PostgreSQL (Supabase)
+    conn = obtener_conexion()
+    c = conn.cursor()
     
+    try:
+        # En PostgreSQL se usa SERIAL en lugar de AUTOINCREMENT
+        c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id SERIAL PRIMARY KEY, nombre TEXT, usuario TEXT UNIQUE, password TEXT, rol TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS cuentas (id SERIAL PRIMARY KEY, id_usuario INTEGER, saldo REAL DEFAULT 0.0, FOREIGN KEY(id_usuario) REFERENCES usuarios(id))''')
+        c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id SERIAL PRIMARY KEY, id_usuario INTEGER, tipo TEXT, monto REAL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT)''')
+        
+        # Consolidación de columnas para PostgreSQL
+        c.execute('''CREATE TABLE IF NOT EXISTS socios (id SERIAL PRIMARY KEY, dni TEXT UNIQUE NOT NULL, nombres TEXT NOT NULL, apellidos TEXT, telefono TEXT, direccion TEXT, correo TEXT, sexo TEXT, fecha_nacimiento TEXT, fecha_ingreso TEXT, es_fundador INTEGER DEFAULT 0, acciones INTEGER DEFAULT 0, password TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS prestamos (id SERIAL PRIMARY KEY, dni_socio TEXT, monto_original REAL, saldo_actual REAL, fecha_inicio TEXT, estado TEXT DEFAULT 'ACTIVO', accion_asociada INTEGER DEFAULT 1, conteo_minimos INTEGER DEFAULT 0)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS tramites (id SERIAL PRIMARY KEY, dni_socio TEXT, tipo TEXT, detalle TEXT, estado TEXT, fecha TEXT, respuesta TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS comunicados (id SERIAL PRIMARY KEY, mensaje TEXT, fecha TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS asistencia (id SERIAL PRIMARY KEY, dni_socio TEXT, fecha_asamblea TEXT, estado TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votaciones (id SERIAL PRIMARY KEY, pregunta TEXT, opciones TEXT, estado TEXT DEFAULT 'ABIERTA', fecha_creacion TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS votos (id SERIAL PRIMARY KEY, id_votacion INTEGER, dni_socio TEXT, opcion TEXT, peso INTEGER DEFAULT 1)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS multas_pendientes (id SERIAL PRIMARY KEY, dni_socio TEXT, motivo TEXT, monto REAL, fecha TEXT, estado TEXT DEFAULT 'PENDIENTE')''')
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS cumpleanos_pagos (id SERIAL PRIMARY KEY, anio INTEGER, mes INTEGER, dni_cumpleanero TEXT, dni_aportante TEXT, monto REAL, fecha_pago TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS solicitudes_prestamo (id SERIAL PRIMARY KEY, dni_socio TEXT, accion INTEGER, monto REAL, fecha TEXT, estado TEXT DEFAULT 'PENDIENTE')''')
+        c.execute('''CREATE TABLE IF NOT EXISTS historial_anulaciones (id SERIAL PRIMARY KEY, fecha TEXT, detalle TEXT, autorizador TEXT)''')
+
+        # Variables por defecto
+        hoy_str = ahora().strftime("%Y-%m-%d")
+        configs = [
+            ("fecha_fundacion", hoy_str), ("monto_minimo_capital", "50.0"), ("cuota_inscripcion", "20.0"),
+            ("interes_prestamo", "1.5"), ("aporte_mensual", "100.0"), ("presidente", "No asignado"),
+            ("correo_presidente", ""), ("tesorero", "No asignado"), ("secretario", "No asignado"),
+            ("password_presidente", "123456"), ("proxima_reunion", "2000-01-01"), ("proxima_reunion_hora", "16:00"),
+            ("jugar_cumpleanos", "SI"), ("cuota_cumpleanos", "50.0"), ("tope_prestamo_activo", "SI"),
+            ("tope_prestamo_monto", "3000.0"), ("amort_porcentaje_activo", "SI"), ("amort_porcentaje_valor", "2.0"),
+            ("mes_limite_minimos", "9"), ("multa_falta", "20.0"), ("multa_tardanza", "10.0")
+        ]
+        
+        # En PostgreSQL, el INSERT OR IGNORE se maneja con ON CONFLICT DO NOTHING
+        for clave, valor in configs:
+            c.execute("INSERT INTO configuracion (clave, valor) VALUES (%s, %s) ON CONFLICT (clave) DO NOTHING", (clave, valor))
+
+        # Creación del Administrador Principal
+        c.execute("SELECT id FROM usuarios WHERE usuario = 'admin'")
+        if not c.fetchone():
+            c.execute("INSERT INTO usuarios (nombre, usuario, password, rol) VALUES ('Administrador Principal', 'admin', 'admin123', 'superadmin')")
+        
+        # Verificamos si existe la cuenta antes de insertarla
+        c.execute("SELECT id FROM cuentas WHERE id_usuario = 1")
+        if not c.fetchone():
+            c.execute("INSERT INTO cuentas (id_usuario, saldo) VALUES (1, 0.0)")
+
+        # Guardamos todos los cambios estructurales en la base de datos de un solo golpe
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback() # Limpia la transacción fallida para no trabar la conexión
+        st.error(f"Error al inicializar la base de datos en la nube: {e}")
+    finally:
+        c.close()
+
+# Control de ejecución en la nube
+if 'db_inicializada' not in st.session_state:
+    inicializar_db()
+    st.session_state.db_inicializada = True
+
+@st.cache_data(ttl=60) # Memoriza el resultado por 60 segundos
 def get_config(clave, default, tipo=float):
     res = db_query("SELECT valor FROM configuracion WHERE clave=?", (clave,))
     return tipo(res[0][0]) if res else tipo(default)
@@ -151,14 +223,19 @@ def format_fecha(fecha_str):
     try: return datetime.strptime(fecha_str, "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y %H:%M:%S") if len(fecha_str) > 10 else datetime.strptime(fecha_str[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
     except: return fecha_str
 
+@st.cache_data(ttl=600)
+def obtener_diccionario_socios():
+    socios = db_query("SELECT dni, nombres, apellidos FROM socios")
+    return {s[0]: f"{s[1].split()[0]} {s[2].split()[0] if s[2] else ''}".strip() for s in socios}
+
 def format_movimiento(texto):
     if not texto: return ""
     texto_out = str(texto)
+    dict_socios = obtener_diccionario_socios()
     numeros = set(re.findall(r'\b\d+\b', texto_out))
     for d in numeros:
-        if len(d) >= 8:
-            soc = db_query("SELECT nombres, apellidos FROM socios WHERE dni=?", (d,))
-            if soc: texto_out = re.sub(rf'\b{d}\b', f"{soc[0][0].split()[0] if soc[0][0] else ''} {soc[0][1].split()[0] if soc[0][1] else ''}".strip(), texto_out)
+        if len(d) >= 8 and d in dict_socios:
+            texto_out = re.sub(rf'\b{d}\b', dict_socios[d], texto_out)
     return texto_out
 
 def truncar_a_un_decimal(numero): return math.floor(numero * 10) / 10.0
@@ -200,24 +277,60 @@ def calcular_nivelacion_por_accion():
         
     return float(cap_esperado), float(int_esperado)
 
+@st.cache_data(ttl=60)
 def obtener_estado_cumpleanos():
     anio_act, mes_act = ahora().year, ahora().month
     meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    
+    # 1. Traemos TODOS los socios de golpe
     socios_c = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
+    
+    # 2. Traemos TODOS los movimientos de cumpleaños de este año
+    movs_cumples_bd = db_query("SELECT tipo, fecha FROM movimientos WHERE monto < 0 AND tipo LIKE '%Cumplea%' AND tipo LIKE ?", (f"%{anio_act}%",))
+    
+    # 3. Lo convertimos en diccionario
+    textos_movs = {str(m[0]).lower(): m[1] for m in movs_cumples_bd} if movs_cumples_bd else {}
+    
     lista_cumples = []
+    
     for s_dni, s_nom, s_ape, fnac in socios_c:
         if fnac:
             try:
                 dt_nac = datetime.strptime(fnac, "%Y-%m-%d")
-                edad_cumple = anio_act - dt_nac.year
-                if edad_cumple < 0: edad_cumple = 0
-                nombre_fmt, estado, fecha_entrega = f"{s_nom.split()[0]} {s_ape.split()[0]} ({s_dni})", "PENDIENTE", "---"
-                entrega_bd = db_query("SELECT fecha FROM movimientos WHERE tipo LIKE ? AND monto < 0", (f"Entrega de Pozo Cumpleaños - {nombre_fmt} ({anio_act})%",))
-                if entrega_bd: estado, fecha_entrega = "ENTREGADO", format_fecha(entrega_bd[0][0])
-                elif dt_nac.month == mes_act: estado = "EN RECAUDACIÓN"
-                lista_cumples.append({"Mes_Num": dt_nac.month, "Día": dt_nac.day, "Mes": meses_nom[dt_nac.month - 1], "Socio": nombre_fmt, "DNI": s_dni, "Estado": estado, "Fecha de Entrega": fecha_entrega})
-            except: pass
-    lista_cumples.sort(key=lambda x: (x["Mes_Num"], x["Día"])); return lista_cumples
+                nom_p = s_nom.split()[0].lower() if s_nom else ""
+                
+                # Manejamos los apellidos asegurando que no explote si no hay
+                if s_ape and s_ape.strip():
+                    ape_p = s_ape.split()[0].lower()
+                else:
+                    ape_p = ""
+                
+                nombre_fmt = f"{s_nom.split()[0]} {s_ape.split()[0] if s_ape else ''} ({s_dni})".replace("  ", " ").strip()
+                nombre_corto_busqueda = f"{nom_p} {ape_p}".strip()
+                
+                estado, fecha_entrega = "PENDIENTE", "---"
+                
+                # 4. Búsqueda flexible en Python (todo en minúsculas)
+                for tipo_mov, fecha_mov in textos_movs.items():
+                    if s_dni in tipo_mov or nombre_corto_busqueda in tipo_mov:
+                        estado = "ENTREGADO"
+                        fecha_entrega = format_fecha(str(fecha_mov))
+                        break
+                
+                if estado == "PENDIENTE" and dt_nac.month == mes_act: 
+                    estado = "EN RECAUDACIÓN"
+                    
+                lista_cumples.append({
+                    "Mes_Num": dt_nac.month, "Día": dt_nac.day, 
+                    "Mes": meses_nom[dt_nac.month - 1], "Socio": nombre_fmt, 
+                    "DNI": s_dni, "Estado": estado, "Fecha de Entrega": fecha_entrega
+                })
+            except Exception as e:
+                # Si falla procesando un socio, lo ignoramos y pasamos al siguiente
+                pass
+            
+    lista_cumples.sort(key=lambda x: (x["Mes_Num"], x["Día"]))
+    return lista_cumples
 
 # =============================================================================
 # 3. LÓGICA DE PDFS
@@ -354,7 +467,7 @@ def generar_pdf_desembolso(nom_soc, d, n_a, m_prestado, m_proy, tot_i, cuotas, f
         try: f_dt = datetime.strptime(fh[:10], "%Y-%m-%d"); meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]; fecha_texto = f"{f_dt.day} de {meses[f_dt.month - 1]} de {f_dt.year}"
         except: fecha_texto = format_fecha(fh[:10])
         pdf.multi_cell(0, 6, txt=f"Suscrito y firmado en señal de estricta conformidad, el día {fecha_texto}.".encode('latin-1','ignore').decode('latin-1'), align='J'); pdf.ln(20)
-        firmas = "_____________________________                  _____________________________\nEL PRESTATARIO                                               POR EL PRESTAMISTA\n" + f"DNI: {d:<15}                        (Junta Directiva {anio_actual})"
+        firmas = "_____________________________                 _____________________________\nEL PRESTATARIO                                             POR EL PRESTAMISTA\n" + f"DNI: {d:<15}                        (Junta Directiva {anio_actual})"
         pdf.multi_cell(0, 5, txt=firmas.encode('latin-1','ignore').decode('latin-1'), align='C')
     f_n = f"D_{d}.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as f: b = f.read()
@@ -408,7 +521,7 @@ def generar_pdf_acta_cierre(anio):
     pdf.cell(0, 6, f" - Excedente depositado a Caja Chica: S/ {sobrante_cc:.2f}", ln=True); pdf.ln(8)
     pdf.set_font("Arial", 'B', 11); pdf.cell(0, 6, "RESUMEN TOTAL REPARTIDO:", ln=True); pdf.set_font("Arial", '', 11)
     pdf.cell(0, 6, f"Total Directiva : S/ {tot_dir:.2f}", ln=True); pdf.cell(0, 6, f"Total Socios    : S/ {tot_soc:.2f}", ln=True); pdf.cell(0, 6, f"Total Caja Chica: S/ {sobrante_cc:.2f}", ln=True); pdf.cell(0, 6, f"GRAN TOTAL      : S/ {tot_dir + tot_soc + sobrante_cc:.2f}", ln=True); pdf.ln(20)
-    firmas = "_____________________________                  _____________________________\nPRESIDENTE(A)                                                  TESORERO(A)\n"
+    firmas = "_____________________________                 _____________________________\nPRESIDENTE(A)                                                  TESORERO(A)\n"
     pdf.multi_cell(0, 5, txt=firmas.encode('latin-1','ignore').decode('latin-1'), align='C')
     f_n = f"Acta_Cierre_{anio}.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as f: b = f.read()
@@ -424,7 +537,7 @@ def generar_pdf_acta_liquidacion(nombre, dni, aportes, deudas, multas, neto):
     if neto >= 0: texto += f"SALDO NETO A DEVOLVER AL SOCIO : S/ {neto:.2f}\n" + "-"*60 + "\n\n"
     else: texto += f"DEUDA PENDIENTE DEL SOCIO A CAJA: S/ {abs(neto):.2f}\n" + "-"*60 + "\n\n"
     texto += "Mediante este documento se hace constar el retiro voluntario y definitivo\ndel socio de la institucion, anulando sus acciones vigentes.\n\n\n\n"
-    texto += "     ____________________________              ____________________________\n           FIRMA DEL SOCIO                        JUNTA DIRECTIVA\n"
+    texto += "     ____________________________               ____________________________\n           FIRMA DEL SOCIO                        JUNTA DIRECTIVA\n"
     for line in texto.split('\n'): pdf.cell(0, 6, txt=line.encode('latin-1','ignore').decode('latin-1'), ln=True)
     f_n = f"Liquidacion_{dni}.pdf"; pdf.output(f_n)
     with open(f_n, "rb") as f: b = f.read()
@@ -537,78 +650,73 @@ def ui_votaciones_admin():
         else: st.info("No hay votaciones activas en este momento.")
 
 def ui_cumpleanos_admin(es_tesorero=False):
-    if not es_tesorero:
-        with st.expander("📅 VER CALENDARIO ANUAL DE CUMPLEAÑOS Y ENTREGAS", expanded=False):
-            lista_c = obtener_estado_cumpleanos()
-            if lista_c:
-                df_c = pd.DataFrame(lista_c)
-                def highlight_estado(val): return 'color: green; font-weight: bold' if val == 'ENTREGADO' else ('color: orange; font-weight: bold' if val == 'EN RECAUDACIÓN' else 'color: gray')
-                st.dataframe(df_c.style.map(highlight_estado, subset=['Estado']), use_container_width=True)
-            else: st.info("No hay fechas registradas.")
-        return
-
-    st.subheader("🎂 Gestión del Juego de Cumpleaños")
-    with st.expander("📅 VER CALENDARIO ANUAL DE CUMPLEAÑOS Y ENTREGAS", expanded=False):
-        lista_c = obtener_estado_cumpleanos()
-        if lista_c:
-            df_c = pd.DataFrame(lista_c)
-            def highlight_estado(val): return 'color: green; font-weight: bold' if val == 'ENTREGADO' else ('color: orange; font-weight: bold' if val == 'EN RECAUDACIÓN' else 'color: gray')
-            st.dataframe(df_c.style.map(highlight_estado, subset=['Estado']), use_container_width=True)
-        else: st.info("No hay fechas registradas.")
+    st.subheader("🎂 Calendario Anual de Cumpleaños")
+    lista_completa = obtener_estado_cumpleanos()
+    
+    with st.expander("📅 VER CALENDARIO Y ESTADOS DE ENTREGA", expanded=True):
+        if lista_completa:
+            df_c = pd.DataFrame(lista_completa)
+            def highlight_estado(val):
+                if val == 'ENTREGADO': return 'color: green; font-weight: bold'
+                if val == 'EN RECAUDACIÓN': return 'color: orange; font-weight: bold'
+                return 'color: gray'
             
-    st.divider(); anio_act, mes_act = ahora().year, ahora().month
-    meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    
-    cumpleaneros = db_query("SELECT dni, nombres, apellidos, fecha_nacimiento FROM socios WHERE acciones > 0")
-    cumplen_este_mes = []
-    for d, n, a, fnac in cumpleaneros:
-        if fnac:
-            try:
-                if datetime.strptime(fnac, "%Y-%m-%d").month == mes_act: cumplen_este_mes.append({"dni": d, "nom": f"{n.split()[0]} {a.split()[0]} ({d})", "dia": datetime.strptime(fnac, "%Y-%m-%d").day})
-            except: pass
-    
-    cuota_c = get_config("cuota_cumpleanos", 0.0)
-    if cumplen_este_mes:
-        st.success(f"Este mes de **{meses_nom[mes_act-1]}** estamos festejando a:")
-        for c in cumplen_este_mes: st.write(f"- 🎈 **{c['nom']}** (Día {c['dia']})")
-        st.divider(); t1, t2 = st.tabs(["💰 COBRAR CUOTAS A SOCIOS", "🎁 ENTREGAR POZO AL CUMPLEAÑERO"])
-        with t1:
-            st.write(f"**Cuota acordada por socio:** S/ {f_m(cuota_c)}")
-            soc_pagadores = db_query("SELECT dni, nombres, apellidos FROM socios WHERE acciones > 0 ORDER BY nombres ASC")
-            dni_festejado = st.selectbox("¿Para el cumpleaños de quién están aportando?", [c['nom'] for c in cumplen_este_mes])
-            dni_f_real = next(c['dni'] for c in cumplen_este_mes if c['nom'] == dni_festejado)
-            st.write("Marque a los socios que están pagando su cuota en este momento:")
-            socios_a_pagar = []
-            for s_p in soc_pagadores:
-                if s_p[0] == dni_f_real: continue
-                ya_pago = db_query("SELECT id FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=? AND dni_aportante=?", (anio_act, mes_act, dni_f_real, s_p[0]))
-                nombre_pagador = f"{s_p[1].split()[0]} {s_p[2].split()[0]}"
-                if ya_pago: st.write(f"✅ {nombre_pagador} (Ya pagó)")
-                else:
-                    if st.checkbox(f"Cobrar a: {nombre_pagador}"): socios_a_pagar.append(s_p[0])
-            if st.button("💾 REGISTRAR PAGO DE CUOTAS", type="primary"):
-                if socios_a_pagar:
-                    monto_ingreso_total = len(socios_a_pagar) * cuota_c; fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
-                    db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (monto_ingreso_total,), fetch=False)
-                    for sp_dni in socios_a_pagar: db_query("INSERT INTO cumpleanos_pagos (anio, mes, dni_cumpleanero, dni_aportante, monto, fecha_pago) VALUES (?,?,?,?,?,?)", (anio_act, mes_act, dni_f_real, sp_dni, cuota_c, fh), fetch=False)
-                    db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Recaudación Cumpleaños - Para {dni_festejado}", monto_ingreso_total, fh), fetch=False)
-                    st.success(f"Se registraron {len(socios_a_pagar)} pagos exitosamente. El dinero ingresó a la Caja Principal."); st.rerun()
-                else: st.warning("No seleccionaste a ningún socio para cobrarle.")
-        with t2:
-            st.write("Entregar el dinero recaudado al cumpleañero.")
-            dni_festejado_pago = st.selectbox("Seleccione al cumpleañero a pagar:", [c['nom'] for c in cumplen_este_mes], key="sel_pagar")
-            dni_f_real_pago = next(c['dni'] for c in cumplen_este_mes if c['nom'] == dni_festejado_pago)
-            recaudado = db_query("SELECT SUM(monto) FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=?", (anio_act, mes_act, dni_f_real_pago))[0][0] or 0.0
-            st.metric(f"Total Recaudado para {dni_festejado_pago}", f"S/ {f_m(recaudado)}")
-            ya_se_le_entrego = db_query("SELECT id FROM movimientos WHERE tipo = ? AND monto < 0", (f"Entrega de Pozo Cumpleaños - {dni_festejado_pago} ({anio_act})",))
-            if ya_se_le_entrego: st.success("✅ El pozo ya fue entregado a este cumpleañero.")
-            elif recaudado > 0:
-                if st.button(f"🎁 ENTREGAR POZO (S/ {f_m(recaudado)}) A {dni_festejado_pago}", type="primary"):
-                    fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
-                    db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (recaudado,), fetch=False); db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Entrega de Pozo Cumpleaños - {dni_festejado_pago} ({anio_act})", -recaudado, fh), fetch=False)
-                    st.success("¡Dinero entregado y descontado de la Caja Principal!"); st.rerun()
-            else: st.info("Aún no se ha recaudado dinero para este cumpleañero.")
-    else: st.info(f"Este mes de **{meses_nom[mes_act-1]}** no hay cumpleaños programados en el padrón de socios activos.")
+            st.dataframe(df_c.style.map(highlight_estado, subset=['Estado']), use_container_width=True)
+        else:
+            st.info("No hay fechas registradas en el padrón.")
+
+    if es_tesorero:
+        st.divider()
+        mes_actual = ahora().month
+        meses_nom = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        cumpleaneros_mes = [c for c in lista_completa if c["Mes_Num"] == mes_actual]
+        
+        if cumpleaneros_mes:
+            st.info(f"💡 **Modo Auditoría:** En este mes de **{meses_nom[mes_actual-1]}**, los socios realizan sus pagos desde su portal. Los estados se actualizarán automáticamente aquí cuando la Secretaría valide los Yapes y el cumpleañero confirme la recepción.")
+            st.write("### 📊 Seguimiento de Recaudación (Solo Validados):")
+            for c in cumpleaneros_mes:
+                recaudado_res = db_query("SELECT SUM(monto) FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=?", (ahora().year, mes_actual, c["DNI"]))
+                recaudado = recaudado_res[0][0] if recaudado_res and recaudado_res[0][0] else 0.0
+                st.write(f"- **{c['Socio']}**: S/ {f_m(recaudado)} validados en la caja.")
+        else:
+            st.success(f"🍃 En el mes de **{meses_nom[mes_actual-1]}** no hay cumpleaños programados en el sistema.")
+
+    if st.session_state.vista == 'secretario':
+        st.divider()
+        st.subheader("🕵️‍♀️ Validación de Yapes (Cumpleaños)")
+        st.write("Llama al Tesorero para confirmar si el dinero ya está en su cuenta bancaria. Si lo apruebas, el dinero entrará a la Caja. Si lo rechazas, el socio tendrá que volver a Yapear.")
+        
+        db_query("CREATE TABLE IF NOT EXISTS cumpleanos_yapes_pendientes (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER, mes INTEGER, dni_cumpleanero TEXT, dni_aportante TEXT, monto REAL, estado TEXT DEFAULT 'PENDIENTE')", fetch=False)
+        
+        pendientes = db_query("SELECT id, dni_cumpleanero, dni_aportante, monto FROM cumpleanos_yapes_pendientes WHERE estado='PENDIENTE'")
+        if pendientes:
+            for p_id, d_cump, d_aport, m_yape in pendientes:
+                nom_aport = db_query("SELECT nombres, apellidos FROM socios WHERE dni=?", (d_aport,))
+                nom_cump = db_query("SELECT nombres, apellidos FROM socios WHERE dni=?", (d_cump,))
+                
+                if nom_aport and nom_cump:
+                    aport_full = f"{nom_aport[0][0]} {nom_aport[0][1]}"
+                    cump_full = f"{nom_cump[0][0]} {nom_cump[0][1]}"
+                    
+                    with st.container(border=True):
+                        st.write(f"📲 **{aport_full}** reportó un Yape de **S/ {f_m(m_yape)}** para **{cump_full}**")
+                        c1, c2 = st.columns(2)
+                        
+                        if c1.button("✅ SÍ, APROBAR Y REGISTRAR", key=f"apr_{p_id}", use_container_width=True):
+                            fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
+                            db_query("UPDATE cumpleanos_yapes_pendientes SET estado='APROBADO' WHERE id=?", (p_id,), fetch=False)
+                            db_query("INSERT INTO cumpleanos_pagos (anio, mes, dni_cumpleanero, dni_aportante, monto, fecha_pago) VALUES (?,?,?,?,?,?)", (ahora().year, ahora().month, d_cump, d_aport, m_yape, fh), fetch=False)
+                            db_query("UPDATE cuentas SET saldo = saldo + ? WHERE id_usuario=1", (m_yape,), fetch=False)
+                            db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Ingreso Cumpleaños - Paga {aport_full.split()[0]} para {cump_full.split()[0]} (Validado por Secretaría)", m_yape, fh), fetch=False)
+                            st.success("Pago aprobado y registrado en la Caja.")
+                            st.rerun()
+                            
+                        if c2.button("❌ RECHAZAR REPORTE", key=f"rech_{p_id}", use_container_width=True):
+                            db_query("UPDATE cumpleanos_yapes_pendientes SET estado='RECHAZADO' WHERE id=?", (p_id,), fetch=False)
+                            st.error("Reporte rechazado. El socio deberá reportarlo de nuevo.")
+                            st.rerun()
+        else:
+            st.success("✅ No hay Yapes pendientes de validación en este momento.")
 
 def ui_registro_nuevo_socio():
     if st.session_state.get('ns_done', False):
@@ -766,6 +874,67 @@ elif st.session_state.socio_logged_in:
             nombres_cumple = ", ".join([f"{c['nom']} (Día {c['dia']})" for c in cumplen_este_mes_alerta])
             a_pagar_cumple = sum([cuota_c for c in cumplen_este_mes_alerta if c["dni"] != s_dni])
             st.success(f"🎉 **¡ESTAMOS DE FIESTA!** FESTEJANDO A: **{nombres_cumple}**. \n\n💡 **TU CUOTA DE CUMPLEAÑOS A PAGAR ES:** S/ {f_m(a_pagar_cumple)}." if a_pagar_cumple > 0 else f"🎉 **¡ESTAMOS DE FIESTA!** FESTEJANDO A: **{nombres_cumple}**. (¡ES TU CELEBRACIÓN, TÚ NO APORTAS!)")
+            
+            db_query("CREATE TABLE IF NOT EXISTS cumpleanos_yapes_pendientes (id INTEGER PRIMARY KEY AUTOINCREMENT, anio INTEGER, mes INTEGER, dni_cumpleanero TEXT, dni_aportante TEXT, monto REAL, estado TEXT DEFAULT 'PENDIENTE')", fetch=False)
+            
+            tesorero_nom = get_config("tesorero", "No asignado", str)
+            tel_tesorero = "No registrado"
+            if tesorero_nom != "No asignado":
+                res_tel = db_query("SELECT telefono FROM socios WHERE nombres || ' ' || apellidos LIKE ?", (f"%{tesorero_nom}%",))
+                if res_tel and res_tel[0][0]: tel_tesorero = res_tel[0][0]
+
+            with st.expander("📲 GESTIONAR MI CUOTA / POZO DE CUMPLEAÑOS", expanded=True):
+                nom_aportante = f"{soc_data[0][0].split()[0]} {soc_data[0][1].split()[0] if soc_data[0][1] else ''}".strip()
+                
+                for c in cumplen_este_mes_alerta:
+                    st.write(f"### 🎈 Para el cumpleaños de {c['nom'].split('(')[0]}")
+                    
+                    if c["dni"] != s_dni:
+                        st.write(f"Transfiere o Yapea tu cuota al Tesorero(a) (**{tesorero_nom}**): **{tel_tesorero}**")
+                        
+                        ya_pago_aprobado = db_query("SELECT id FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=? AND dni_aportante=?", (ahora().year, mes_actual, c["dni"], s_dni))
+                        ya_pago_pendiente = db_query("SELECT id FROM cumpleanos_yapes_pendientes WHERE anio=? AND mes=? AND dni_cumpleanero=? AND dni_aportante=? AND estado='PENDIENTE'", (ahora().year, mes_actual, c["dni"], s_dni))
+                        
+                        if ya_pago_aprobado:
+                            st.success(f"✅ Tu pago de S/ {f_m(cuota_c)} fue verificado y aprobado.")
+                        elif ya_pago_pendiente:
+                            st.info("⏳ Tu reporte de pago está en verificación por la Secretaría. (Si se rechaza, podrás volver a intentarlo).")
+                        else:
+                            if st.button(f"✅ Ya Yapeé S/ {f_m(cuota_c)} para este cumple", key=f"self_pay_cump_{c['dni']}"):
+                                db_query("INSERT INTO cumpleanos_yapes_pendientes (anio, mes, dni_cumpleanero, dni_aportante, monto, estado) VALUES (?,?,?,?,?,?)", (ahora().year, mes_actual, c["dni"], s_dni, cuota_c, 'PENDIENTE'), fetch=False)
+                                st.rerun()
+                                
+                    else:
+                        st.info("🎁 **¡Es tu pozo!** El Tesorero recolectará los Yapes de tus compañeros y luego te transferirá el total.")
+                        
+                        total_socios_activos = db_query("SELECT COUNT(*) FROM socios WHERE acciones > 0")[0][0]
+                        total_esperado_pagadores = total_socios_activos - 1
+                        
+                        pagos_realizados = db_query("SELECT COUNT(*) FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=?", (ahora().year, mes_actual, s_dni))[0][0]
+                        recaudado = db_query("SELECT SUM(monto) FROM cumpleanos_pagos WHERE anio=? AND mes=? AND dni_cumpleanero=?", (ahora().year, mes_actual, s_dni))[0][0] or 0.0
+                        
+                        st.metric("Monto recaudado y validado hasta ahora:", f"S/ {f_m(recaudado)}", f"{pagos_realizados} de {total_esperado_pagadores} aportes listos")
+
+                        nombre_corto_pago = " ".join(c['nom'].split()[:2]).replace(" (", "")
+                        query_ya_entrego = "SELECT id FROM movimientos WHERE monto < 0 AND tipo LIKE '%Cumplea%' AND tipo LIKE ? AND (tipo LIKE ? OR tipo LIKE ?)"
+                        ya_se_le_entrego = db_query(query_ya_entrego, (f"%{ahora().year}%", f"%{s_dni}%", f"%{nombre_corto_pago}%"))
+
+                        if ya_se_le_entrego:
+                            st.success("✅ Ya confirmaste la recepción de tu pozo.")
+                        elif pagos_realizados >= total_esperado_pagadores:
+                            st.balloons()
+                            st.warning(f"¡Pozo Completo! ¿El Tesorero ya te transfirió los S/ {f_m(recaudado)} a tu cuenta personal?")
+                            if st.button("✅ SÍ, CONFIRMO QUE YA RECIBÍ EL POZO COMPLETO", key=f"recibir_pozo_{s_dni}", type="primary", use_container_width=True):
+                                fh = ahora().strftime("%Y-%m-%d %H:%M:%S")
+                                nom_cumpleanero = c["nom"].split("(")[0].strip()
+                                db_query("UPDATE cuentas SET saldo = saldo - ? WHERE id_usuario=1", (recaudado,), fetch=False)
+                                db_query("INSERT INTO movimientos (id_usuario, tipo, monto, fecha) VALUES (1, ?, ?, ?)", (f"Entrega de Pozo Cumpleaños - {nom_cumpleanero} ({s_dni}) (Auto Confirmado)", -recaudado, fh), fetch=False)
+                                st.success("¡Confirmación registrada! Gracias por avisar.")
+                                st.rerun()
+                        else:
+                            faltan = total_esperado_pagadores - pagos_realizados
+                            st.info(f"⏳ El botón de confirmación aparecerá automáticamente cuando todos tus compañeros terminen de pagar y la Secretaría los valide. (Faltan {faltan} pagos por aprobar)")
+
         ui_cumpleanos_admin(es_tesorero=False)
                 
     coms = db_query("SELECT mensaje, fecha FROM comunicados WHERE mensaje NOT LIKE '%anulación%' AND mensaje NOT LIKE '%anuló%' ORDER BY id DESC")
@@ -1129,7 +1298,6 @@ elif st.session_state.vista == 'secretario':
 
 elif st.session_state.vista == 'tesorero':
     render_top_header()
-    # AGREGAMOS "💾 BACKUP DEL SISTEMA" AL FINAL DE LA LISTA
     opciones_menu_t = ["📊 PANEL DE CONTROL", "👥 SOCIOS Y COMPRAS", "💳 PAGOS Y PRÉSTAMOS", "💰 CAJA GLOBAL", "📥 CAJA CHICA", "⚙️ REGLAS FINANCIERAS", "🎁 REPARTO UTILIDADES", "🎂 CUMPLEAÑOS", "↩️ ANULAR OPERACIÓN", "💾 BACKUP DEL SISTEMA"]
     menu_t = st.radio("MÓDULOS FINANCIEROS:", opciones_menu_t, horizontal=True)
 
@@ -1151,7 +1319,6 @@ elif st.session_state.vista == 'tesorero':
                     c1.write(f"**DNI:** {dni_busq}\n\n**Teléfono:** {tel or '---'}\n\n**Correo:** {cor or '---'}")
                     c2.write(f"**Dirección:** {dir_ or '---'}\n\n**Sexo:** {sex or '---'}\n\n**Fecha Ingreso:** {format_fecha(fing)}")
                     
-                    # CORRECCIÓN: Ahora el Tesorero también busca los aportes por DNI y por Nombre corto
                     nombre_fmt_busq = f"{nom.split()[0]} {ape.split()[0] if ape else ''}".strip()
                     tot_ah = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{dni_busq}%", f"%{nombre_fmt_busq}%"))[0][0] or 0.0
                     
@@ -1384,7 +1551,7 @@ elif st.session_state.vista == 'tesorero':
                             st.markdown("### 🧾 Vista Previa del Voucher")
                             fh_pre = ahora().strftime("%Y-%m-%d %H:%M:%S")
                             txt_v = f"======================================\n      BANCO LA COLMENA DEL PERÚ\n      COMPROBANTE DE PAGO\n======================================\nFecha: {format_fecha(fh_pre)}\nSocio: {n} {a}\nDNI:   {pdni}\n--------------------------------------\n"
-                            if st.session_state.pu_tot_ap > 0: txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :             S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
+                            if st.session_state.pu_tot_ap > 0: txt_v += "APORTES MENSUALES:\n" + "".join([f" - Accion {ap[0]:<2} :              S/ {f_m(ap[1])}\n" for ap in st.session_state.pu_det_ap]) + f"   Subtotal Aportes :   S/ {f_m(st.session_state.pu_tot_ap)}\n--------------------------------------\n"
                             if st.session_state.pu_tot_cap > 0 or st.session_state.pu_tot_int > 0: txt_v += "PAGO DE PRESTAMOS:\n" + "".join([f" - Accion {pr['acc']}:\n      Capital :         S/ {f_m(pr['cap'])}\n      Interes :         S/ {f_m(pr['int'])}\n      Saldo Cap. Act. : S/ {f_m(max(0.0, pr['saldo'] - pr['cap']))}\n" for pr in st.session_state.pu_det_pr]) + f"   Subtotal Prestamos : S/ {f_m(st.session_state.pu_tot_cap + st.session_state.pu_tot_int)}\n--------------------------------------\n"
                             if st.session_state.pu_tot_mul > 0: txt_v += "MULTAS:\n" + "".join([f" - {m_motivo[:20]:<20} : S/ {f_m(m_monto)}\n" for _, m_motivo, m_monto in st.session_state.pu_det_mul]) + f"   Subtotal Multas    : S/ {f_m(st.session_state.pu_tot_mul)}\n--------------------------------------\n"
                             txt_v += f"TOTAL A PAGAR         : S/ {f_m(st.session_state.pu_tot)}\n======================================\n\n\n     ____________________________\n         FIRMA DEL SOCIO\n"
@@ -1612,7 +1779,6 @@ elif st.session_state.vista == 'tesorero':
         
         resumen_socios, morosos = [], False
         for s_dni, s_nom, s_ape, s_acc in db_query("SELECT dni, nombres, apellidos, acciones FROM socios ORDER BY nombres ASC"):
-            # CORRECCIÓN: Creamos el nombre corto y buscamos por DNI o por Nombre
             nombre_fmt = f"{s_nom.split()[0]} {s_ape.split()[0] if s_ape else ''}".strip()
             ap_socio = db_query("SELECT SUM(monto) FROM movimientos WHERE tipo LIKE '%Aporte%' AND (tipo LIKE ? OR tipo LIKE ?)", (f"%{s_dni}%", f"%{nombre_fmt}%"))[0][0] or 0.0
             
@@ -1837,28 +2003,58 @@ elif st.session_state.vista == 'tesorero':
 
     elif menu_t == "💾 BACKUP DEL SISTEMA":
         st.subheader("💾 Copia de Seguridad Total (.db)")
-        st.write("Descarga una réplica exacta de tu base de datos en formato SQLite (.db), compatible con visores de bases de datos.")
+        st.write("El sistema extraerá los datos actuales de la nube (Supabase) y fabricará un archivo SQLite (.db) al instante para que puedas descargarlo y visualizarlo localmente.")
         
         if st.button("📦 FABRICAR Y DESCARGAR BASE DE DATOS (.db)", type="primary", use_container_width=True):
             try:
-                if os.path.exists("banquito.db"):
-                    with open("banquito.db", "rb") as f:
-                        db_bytes = f.read()
+                # 1. Definimos todas las tablas que existen en tu base de datos
+                tablas = [
+                    'usuarios', 'cuentas', 'movimientos', 'configuracion', 'socios', 
+                    'prestamos', 'tramites', 'comunicados', 'asistencia', 'votaciones', 
+                    'votos', 'multas_pendientes', 'cumpleanos_pagos', 'solicitudes_prestamo', 
+                    'historial_anulaciones'
+                ]
+                
+                # 2. Conectamos a PostgreSQL (La Nube)
+                conn_pg = obtener_conexion()
+                
+                # 3. Creamos un archivo temporal SQLite (.db) vacío
+                db_temp_path = "Backup_Temp.db"
+                if os.path.exists(db_temp_path):
+                    os.remove(db_temp_path) # Borramos si quedó basura de antes
                     
-                    fecha_hoy = ahora().strftime("%Y_%m_%d")
-                    
-                    st.success("✅ ¡Base de datos preparada para descarga!")
-                    st.download_button(
-                        label=f"📥 DESCARGAR BANQUITO_FULL_{fecha_hoy}.db", 
-                        data=db_bytes, 
-                        file_name=f"Banquito_Full_{fecha_hoy}.db", 
-                        mime="application/octet-stream",
-                        use_container_width=True
-                    )
-                else:
-                    st.error("No se encontró el archivo de base de datos local.")
+                conn_sqlite = sqlite3.connect(db_temp_path)
+                
+                # 4. Magia: Copiamos tabla por tabla de PostgreSQL a SQLite
+                for tabla in tablas:
+                    try:
+                        # Leemos la tabla de la nube usando pandas
+                        df = pd.read_sql_query(f"SELECT * FROM {tabla}", conn_pg)
+                        # La inyectamos en el archivo .db local
+                        df.to_sql(tabla, conn_sqlite, if_exists='replace', index=False)
+                    except Exception as e_tabla:
+                        pass # Si una tabla está vacía o no existe, la salta sin dar error
+                
+                conn_sqlite.close()
+                
+                # 5. Leemos el archivo .db ya terminado y lleno de datos
+                with open(db_temp_path, "rb") as f:
+                    db_bytes = f.read()
+                
+                # Borramos el temporal para no dejar basura en el servidor
+                os.remove(db_temp_path)
+                
+                # 6. Te entregamos el archivo con el nombre exacto que pediste
+                st.success("✅ ¡Base de datos actualizada y convertida a .db con éxito!")
+                st.download_button(
+                    label="📥 DESCARGAR BASE DE DATOS", 
+                    data=db_bytes, 
+                    file_name="banquito.db", 
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
             except Exception as e:
-                st.error(f"Error al generar el archivo: {e}")
+                st.error(f"Error al generar la conversión a .db: {e}")
 
     elif menu_t == "↩️ ANULAR OPERACIÓN":
         st.subheader("↩️ Anular Operación (Corrección de Errores)")
